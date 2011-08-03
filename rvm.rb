@@ -30,3 +30,24 @@ dep 'rvm setup default ruby' do
     log_shell "Installing #{var(:default_ruby)} with rvm", "rvm use #{var(:default_ruby)} --default"
   }
 end
+
+dep 'rvm passenger module installed' do
+  setup { set( :passenger_path, Babushka::GemHelper.gem_path_for("passenger")) }
+  met? { File.exists?("#{var(:passenger_path)}/ext/apache2/mod_passenger.so") }
+  meet { shell("passenger-install-apache2-module -a") }
+end
+
+dep 'rvm passenger config' do
+  met? { File.exist?("/etc/apache2/mods-enabled/passenger.conf") }
+  meet {
+    str = [
+      "LoadModule passenger_module #{var(:passenger_path)}/ext/apache2/mod_passenger.so",
+      "PassengerRoot #{var(:passenger_path)}",
+      "PassengerRuby #{ Babushka::GemHelper.ruby_wrapper_path }",
+      "PassengerMaxPoolSize 2",
+      "PassengerPoolIdleTime 0",
+      "PassengerUseGlobalQueue on"
+    ]
+    append_to_file str.join("\n "), "/etc/apache2/mods-enabled/passenger.conf"
+  }
+end

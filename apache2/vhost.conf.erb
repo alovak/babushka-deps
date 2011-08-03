@@ -1,0 +1,7 @@
+<VirtualHost *:80>
+  ServerName <%= var(:domain) %>
+  DocumentRoot <%= '/var/www' / var(:domain) / 'current/public' %>
+
+  ErrorLog <%= '/var/www' / var(:domain) / 'shared/log/error.log' %>
+  CustomLog <%= '/var/www' / var(:domain) / 'shared/log/access.log' %> common
+</VirtualHost>
