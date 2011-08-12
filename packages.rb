@@ -48,5 +48,5 @@ end
 
 dep 'passenger.gem' do
   installs 'passenger ~> 3.0.7'
-  provides 'passenger-install-nginx-module'
+  provides 'passenger-install-apache2-module'
 end
