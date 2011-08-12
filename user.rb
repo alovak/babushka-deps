@@ -27,12 +27,8 @@ end
 
 dep 'user exists with password' do
   requires 'user exists'
-  on :linux do
-    met? { shell('sudo cat /etc/shadow')[/^#{var(:username)}:[^\*!]/] }
-    meet {
-      sudo "echo -e '#{var(:password)}\n#{var(:password)}' | passwd #{var(:username)}"
-    }
-  end
+  met? { shell('sudo cat /etc/shadow')[/^#{var(:username)}:[^\*!]/] }
+  meet { sudo "echo -e '#{var(:password)}\n#{var(:password)}' | passwd #{var(:username)}" }
 end
 
 dep 'user exists' do
