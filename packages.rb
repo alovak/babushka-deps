@@ -50,3 +50,11 @@ dep 'passenger.gem' do
   installs 'passenger ~> 3.0.7'
   provides 'passenger-install-apache2-module'
 end
+
+dep 'bundler.gem' do
+  provides 'bundle'
+end
+
+dep 'sendmail.managed' do
+  provides 'sendmail'
+end

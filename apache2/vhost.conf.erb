@@ -1,4 +1,5 @@
 <VirtualHost *:80>
+  PassengerUser <%= var(:deploy_user) %>
   ServerName <%= var(:domain) %>
   DocumentRoot <%= '/var/www' / var(:domain) / 'current/public' %>
 

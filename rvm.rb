@@ -37,13 +37,19 @@ dep 'rvm passenger module installed' do
   meet { shell("passenger-install-apache2-module -a") }
 end
 
-dep 'rvm passenger config' do
+dep 'rvm passenger apache configured' do
+  requires 'rvm passenger module installed'
+
   met? { File.exist?("/etc/apache2/mods-enabled/passenger.conf") }
   meet {
+    ruby_bin_path = shell("gem env | grep 'RUBY EXECUTABLE' -")
+    matches = ruby_bin_path.match(/[^\/]*(.*rvm\/)rubies\/([^\/]*)/)
+    ruby_wrapper_path = "#{matches[1]}wrappers/#{matches[2]}/ruby"
+    
     str = [
       "LoadModule passenger_module #{var(:passenger_path)}/ext/apache2/mod_passenger.so",
       "PassengerRoot #{var(:passenger_path)}",
-      "PassengerRuby #{ Babushka::GemHelper.ruby_wrapper_path }",
+      "PassengerRuby #{ ruby_wrapper_path }",
       "PassengerMaxPoolSize 2",
       "PassengerPoolIdleTime 0",
       "PassengerUseGlobalQueue on"

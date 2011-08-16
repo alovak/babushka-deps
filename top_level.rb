@@ -1,6 +1,6 @@
 dep 'rails project' do
-  requires 'user exists with password', 'user ssh key authorization', 'rvm installed', 'rvm set group for user', 'rvm setup default ruby',
-    'apache2 prepared', 'mysql user access'
+  requires 'user exists with password', 'user ssh key authorization', 'rvm installed', 'rvm set group for user', 'rvm setup default ruby', 'bundler.gem',
+    'apache2 prepared', 'mysql user access', 'sendmail.managed'
   # mysql server
   # mysql databases for rails project
   # logrotate ?
