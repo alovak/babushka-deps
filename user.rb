@@ -1,5 +1,5 @@
 dep 'user setup' do
-  requires 'sshd.managed', 'user exists with password', 'user ssh key authorization'
+  requires 'admins can sudo', 'sshd.managed', 'user exists with password', 'user ssh key authorization'
 end
 
 dep 'user ssh key authorization' do
@@ -46,3 +46,13 @@ dep 'user exists' do
   }
 end
 
+dep 'admins can sudo' do
+  requires 'admin group'
+  met? { !sudo('cat /etc/sudoers').split("\n").grep(/^%admin/).empty? }
+  meet { append_to_file '%admin ALL=(ALL) ALL', '/etc/sudoers', :sudo => true }
+end
+
+dep 'admin group' do
+  met? { grep /^admin\:/, '/etc/group' }
+  meet { sudo 'groupadd admin' }
+end
