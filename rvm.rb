@@ -2,7 +2,7 @@ dep 'rvm installed' do
   requires 'curl.managed', 'rvm requirements'
   met? { File.exist?("/usr/local/rvm") }
   meet do
-    shell "bash < <(curl -sk https://rvm.beginrescueend.com/install/rvm)"
+    shell %{bash -c "`curl -sk https://rvm.beginrescueend.com/install/rvm`"}
   end
 end
 
