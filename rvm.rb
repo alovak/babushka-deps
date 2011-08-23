@@ -19,7 +19,7 @@ meta :rvm do
   end
 
   def version(gem_name)
-    spec = YAML.parse(rvm('gem specification passenger'))
+    spec = YAML.parse(rvm("gem specification #{gem_name}"))
     spec.select("/version/version")[0].value
   end
 end
@@ -27,8 +27,11 @@ end
 dep 'test.rvm' do
   met? { false }
   meet do
-    puts gem_path('passenger')
-    puts ruby_wrapper_path
+    # puts gem_path('passenger')
+    # puts ruby_wrapper_path
+    yaml = rvm('gem specification passenger')
+    gem_spec = Gem::Specification.from_yaml(yaml)
+    puts gem_spec.inspect
   end
 end
 
@@ -80,6 +83,7 @@ dep 'passenger.rvm' do
 end
 
 dep 'passenger module installed.rvm' do
+  requires 'libcurl4-openssl-dev.managed'
   setup { set( :passenger_path, gem_path("passenger")) }
   met? { File.exists?("#{var(:passenger_path)}/ext/apache2/mod_passenger.so") }
   meet { login_shell("passenger-install-apache2-module -a") }

@@ -15,6 +15,10 @@ dep 'libreadline6.managed' do
   provides []
 end
 
+dep 'libcurl4-openssl-dev.managed' do
+  provides []
+end
+
 dep 'libreadline6-dev.managed' do
   provides []
 end
