@@ -2,6 +2,11 @@ dep 'build-essential.managed' do
   provides []
 end
 
+dep 'sshd.managed' do
+  installs "openssh-server"
+  provides []
+end
+
 dep 'bison.managed'
 dep 'openssl.managed'
 dep 'curl.managed'
@@ -46,14 +51,6 @@ dep 'apache2-prefork.managed' do
   provides []
 end
 
-dep 'passenger.gem' do
-  installs 'passenger ~> 3.0.7'
-  provides 'passenger-install-apache2-module'
-end
-
-dep 'bundler.gem' do
-  provides 'bundle'
-end
 
 dep 'sendmail.managed' do
   provides 'sendmail'

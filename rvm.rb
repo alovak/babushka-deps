@@ -1,9 +1,44 @@
+meta :rvm do
+  def rvm args
+    shell "/usr/local/rvm/bin/rvm #{args}", :log => args['install']
+  end
+
+  def gem_path(gem_name)
+    env_info.val_for('INSTALLATION DIRECTORY') + "/gems/" + gem_name + "-" + version(gem_name)
+  end
+
+  def ruby_wrapper_path
+    matches = env_info.val_for('RUBY EXECUTABLE').match(/[^\/]*(.*rvm\/)rubies\/([^\/]*)/)
+    "#{matches[1]}wrappers/#{matches[2]}/ruby"
+  end
+
+  private
+
+  def env_info
+    @_cached_env_info ||= rvm('gem env')
+  end
+
+  def version(gem_name)
+    spec = YAML.parse(rvm('gem specification passenger'))
+    spec.select("/version/version")[0].value
+  end
+end
+
+dep 'test.rvm' do
+  met? { false }
+  meet do
+    puts gem_path('passenger')
+    puts ruby_wrapper_path
+  end
+end
+
 dep 'rvm installed' do
   requires 'curl.managed', 'rvm requirements'
   met? { File.exist?("/usr/local/rvm") }
   meet do
-    shell %{bash -c "`curl -sk https://rvm.beginrescueend.com/install/rvm`"}
-  end
+    log_shell "Installing rvm",
+              %{bash -c "`curl -sk https://rvm.beginrescueend.com/install/rvm`"}
+  end  
 end
 
 dep 'rvm requirements' do
@@ -16,36 +51,45 @@ dep 'rvm set group for user' do
   meet { sudo("adduser #{var(:rvm_username)} rvm") }
 end
 
-dep 'rvm ruby installed' do
-  met? { shell("rvm list").include?(var(:default_ruby, :default => '1.9.2')) }
+dep 'ruby installed.rvm' do
+  met? { rvm("list").include?(var(:default_ruby, :default => '1.9.2')) }
+
   meet {
-    log_shell "Installing #{var(:default_ruby)} with rvm", "rvm install #{var(:default_ruby)}"
+    File.open("/root/.curlrc", "w") {|f| f.puts "-k"}
+    rvm("install #{var(:default_ruby)}")
+    shell "rm /root/.curlrc"
   }
 end
 
-dep 'rvm setup default ruby' do
-  requires 'rvm ruby installed'
-  met? { shell("rvm list").include?("=>") }
+dep 'setup default ruby.rvm' do
+  requires 'ruby installed.rvm'
+  met? { login_shell('ruby --version')["ruby #{var(:default_ruby)}"] }
   meet {
-    log_shell "Installing #{var(:default_ruby)} with rvm", "rvm use #{var(:default_ruby)} --default"
+    rvm("use #{var(:default_ruby)} --default")
   }
 end
 
-dep 'rvm passenger module installed' do
-  setup { set( :passenger_path, Babushka::GemHelper.gem_path_for("passenger")) }
+dep 'bundler.rvm' do
+  met? { rvm("gem list bundler")["bundler"] }
+  meet { rvm("gem install bundler --no-rdoc --no-ri") }
+end
+
+dep 'passenger.rvm' do
+  met? { rvm("gem list passenger")["passenger"] }
+  meet { rvm("gem install passenger --no-rdoc --no-ri") }
+end
+
+dep 'passenger module installed.rvm' do
+  setup { set( :passenger_path, gem_path("passenger")) }
   met? { File.exists?("#{var(:passenger_path)}/ext/apache2/mod_passenger.so") }
-  meet { shell("passenger-install-apache2-module -a") }
+  meet { login_shell("passenger-install-apache2-module -a") }
 end
 
-dep 'rvm passenger apache configured' do
-  requires 'rvm passenger module installed'
+dep 'passenger apache configured.rvm' do
+  requires 'passenger module installed.rvm'
 
   met? { File.exist?("/etc/apache2/mods-enabled/passenger.conf") }
   meet {
-    ruby_bin_path = shell("gem env | grep 'RUBY EXECUTABLE' -")
-    matches = ruby_bin_path.match(/[^\/]*(.*rvm\/)rubies\/([^\/]*)/)
-    ruby_wrapper_path = "#{matches[1]}wrappers/#{matches[2]}/ruby"
-    
     str = [
       "LoadModule passenger_module #{var(:passenger_path)}/ext/apache2/mod_passenger.so",
       "PassengerRoot #{var(:passenger_path)}",

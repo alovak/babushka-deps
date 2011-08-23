@@ -1,6 +1,6 @@
 dep 'apache2 prepared' do
-  requires 'apache2-prefork.managed', 'passenger.gem', 'rvm passenger apache configured', 'apache2 vhost configured'
-  after { "apache2ctl restart" }
+  requires 'apache2-prefork.managed', 'passenger.rvm', 'passenger apache configured.rvm', 'apache2 vhost configured'
+  after { shell "apache2ctl restart" }
 end
 
 dep 'apache2 vhost configured' do
