@@ -100,6 +100,19 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0xee4444, 1);
     g.fillRect(8, 20, 24, 6);
     g.generateTexture('enemy-robot', 36, 36);
+
+    // Tank: olive top-down view with barrel pointing right
+    g.clear();
+    g.fillStyle(0x223311, 1);
+    g.fillRect(2, 2,  36, 8);   // left track
+    g.fillRect(2, 26, 36, 8);   // right track
+    g.fillStyle(0x556633, 1);
+    g.fillRect(6, 10, 28, 16);  // body
+    g.fillStyle(0x667744, 1);
+    g.fillCircle(20, 18, 9);    // turret
+    g.fillStyle(0x334422, 1);
+    g.fillRect(20, 15, 18, 6);  // barrel →
+    g.generateTexture('tank', 40, 36);
     g.destroy();
   }
 
@@ -118,16 +131,22 @@ class GameScene extends Phaser.Scene {
     this.drawWalls();
 
     // Robots
-    const makeRobot = (x, y, isPlayer, id) => ({
-      id, isPlayer, x, y, spawnX: x, spawnY: y,
-      hp: 100, maxHp: 100, respawning: false,
+    const makeRobot = (x, y, isPlayer, id, isTank = false) => ({
+      id, isPlayer, isTank, x, y, spawnX: x, spawnY: y,
+      hp: isTank ? 38 : 100, maxHp: isTank ? 38 : 100, respawning: false,
       cooldowns: [0, 0, 0],
-      sprite: this.add.image(x, y, isPlayer ? 'player-robot' : 'enemy-robot').setOrigin(0.5),
+      sprite: this.add.image(x, y,
+        isTank ? 'tank' : (isPlayer ? 'player-robot' : 'enemy-robot')
+      ).setOrigin(0.5),
       selectionRing: this.add.graphics(),
       hpBar: this.add.graphics(),
       cdBar: this.add.graphics(),
-      label: this.add.text(x, y + 24, isPlayer ? `P${id+1}` : `E${id+1}`,
-        { fontSize: '10px', color: isPlayer ? '#88aaff' : '#ff8888', fontFamily: 'monospace' }).setOrigin(0.5),
+      label: this.add.text(x, y + 28,
+        isTank ? `T${id+1}` : (isPlayer ? `P${id+1}` : `E${id+1}`),
+        { fontSize: '10px',
+          color: isTank ? '#88ff44' : (isPlayer ? '#88aaff' : '#ff8888'),
+          fontFamily: 'monospace' }
+      ).setOrigin(0.5),
     });
 
     robots = [
@@ -136,6 +155,8 @@ class GameScene extends Phaser.Scene {
       makeRobot(700, 140, false, 0),
       makeRobot(700, 520, false, 1),
       makeRobot(680, 330, false, 2),
+      makeRobot(390, 180, false, 0, true),  // Tank 1
+      makeRobot(360, 410, false, 1, true),  // Tank 2
     ];
 
     this.robots = robots;
@@ -175,6 +196,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 2200, callback: this.enemyTurn,     callbackScope: this, loop: true });
     // Companion AI timer (P2)
     this.time.addEvent({ delay: 1600, callback: this.companionTurn, callbackScope: this, loop: true });
+    // Tank AI timer
+    this.time.addEvent({ delay: 1900, callback: this.tankTurn,      callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
     document.getElementById('w3').onclick = () => this.hideWeaponMenu();
@@ -427,8 +450,8 @@ class GameScene extends Phaser.Scene {
     target.hp = Math.max(0, target.hp - dmg);
     this.drawHpBar(target);
 
-    // Shot effect — use different color for enemy shots
-    const shotColor = attacker.isPlayer ? w.color : w.enemyColor;
+    // Shot color: player=weapon color, tank=lime, enemy=enemy color
+    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : w.enemyColor);
     this.showShotEffect(attacker, target, shotColor);
     this.showDmgNumber(target.x, target.y, dmg, shotColor);
     this.updateStatus(`${attacker.label.text} стреляет ${w.name} → ${target.label.text}: -${dmg} HP`);
@@ -492,7 +515,7 @@ class GameScene extends Phaser.Scene {
       }
     } else {
       this.time.delayedCall(500, () => {
-        const enemiesAlive = this.robots.filter(r => !r.isPlayer && r.hp > 0).length;
+        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isTank && r.hp > 0).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
     }
@@ -633,6 +656,43 @@ class GameScene extends Phaser.Scene {
         return;
       }
     }
+  }
+
+  // Tank AI — attacks everyone (players and enemies alike)
+  tankTurn() {
+    if (gameOver) return;
+    const tanks = this.robots.filter(r => r.isTank && r.hp > 0);
+    const allTargets = this.robots.filter(r => !r.isTank && r.hp > 0 && !r.respawning);
+    if (!tanks.length || !allTargets.length) return;
+
+    const now = Date.now();
+    tanks.forEach(tank => {
+      const target = allTargets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(tank.x, tank.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(tank.x, tank.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(tank.x, tank.y, target.x, target.y);
+
+      // Rotate sprite to face target
+      tank.sprite.setRotation(Math.atan2(target.y - tank.y, target.x - tank.x));
+
+      // Shoot if possible
+      let bestW = -1;
+      WEAPONS.forEach((w, i) => {
+        if (tank.cooldowns[i] <= now && dist <= w.range &&
+            !this.lineBlockedByWall(tank.x, tank.y, target.x, target.y)) {
+          if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+        }
+      });
+
+      if (bestW >= 0) {
+        this.attackRobot(tank, target, bestW);
+        return;
+      }
+
+      // Move toward target
+      this.moveToward(tank, target.x, target.y, 70);
+    });
   }
 
   updateStatus(msg) {
