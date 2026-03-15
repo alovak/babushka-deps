@@ -207,11 +207,11 @@ class GameScene extends Phaser.Scene {
         r.cdBar.fillStyle(WEAPONS[armedWeapon].color, 1); r.cdBar.fillRect(bx, by, bw * pct, bh);
         r.cdBar.lineStyle(1, 0x555566, 1); r.cdBar.strokeRect(bx, by, bw, bh);
       } else {
-        // Enemy: show soonest weapon cooldown
-        let minCd = Infinity, minTotal = 1;
+        // Enemy: show soonest active cooldown (skip weapons already ready)
+        let minCd = 0, minTotal = 1;
         WEAPONS.forEach((w, i) => {
           const cd = Math.max(0, r.cooldowns[i] - now);
-          if (cd < minCd) { minCd = cd; minTotal = w.cd; }
+          if (cd > 0 && (minCd === 0 || cd < minCd)) { minCd = cd; minTotal = w.cd; }
         });
         if (minCd <= 0) return;
         const pct = minCd / minTotal;
