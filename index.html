@@ -226,15 +226,26 @@ class GameScene extends Phaser.Scene {
     this.shotLine     = this.add.graphics();
     this.rangeCircle  = this.add.graphics();
 
-    // ── Planes ────────────────────────────────────────────────────────────
-    this.planes = [
-      { x: -30, y: 160, angle: 0.15,             speed: 130, dropIn: 2.5 },
-      { x: W+30, y: 440, angle: Math.PI - 0.2,   speed: 115, dropIn: 1.2 },
-      { x: 200,  y: -30, angle: Math.PI/2 + 0.1, speed: 120, dropIn: 3.8 },
-    ];
-    this.planes.forEach(p => {
-      p.sprite = this.add.image(p.x, p.y, 'plane').setOrigin(0.5).setScale(1.1);
-      p.sprite.setRotation(p.angle);
+    // ── Planes (added to robots array so they can be shot) ────────────────
+    [
+      { x: -30,  y: 160, angle: 0.15,             speed: 130, dropIn: 2.5 },
+      { x: W+30, y: 440, angle: Math.PI - 0.2,    speed: 115, dropIn: 1.2 },
+      { x: 200,  y: -30, angle: Math.PI/2 + 0.1,  speed: 120, dropIn: 3.8 },
+    ].forEach((pd, i) => {
+      const plane = {
+        id: i, isPlayer: false, isTank: false, isPlane: true,
+        x: pd.x, y: pd.y, spawnX: pd.x, spawnY: pd.y,
+        hp: 38, maxHp: 38, respawning: false,
+        cooldowns: [0, 0, 0],
+        angle: pd.angle, speed: pd.speed, dropIn: pd.dropIn,
+        sprite: this.add.image(pd.x, pd.y, 'plane').setOrigin(0.5).setScale(1.1),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(pd.x, pd.y, '', {fontSize:'1px'}).setOrigin(0.5),
+      };
+      plane.sprite.setRotation(pd.angle);
+      robots.push(plane);
     });
   }
 
@@ -244,7 +255,7 @@ class GameScene extends Phaser.Scene {
 
     // ── Planes ────────────────────────────────────────────────────────────
     if (!gameOver) {
-      this.planes.forEach(p => {
+      this.robots.filter(r => r.isPlane && r.hp > 0).forEach(p => {
         p.x += Math.cos(p.angle) * p.speed * dt;
         p.y += Math.sin(p.angle) * p.speed * dt;
         // Wrap around edges
@@ -268,7 +279,7 @@ class GameScene extends Phaser.Scene {
     // ── Cooldown bars ─────────────────────────────────────────────────────
     this.robots.forEach(r => {
       r.cdBar.clear();
-      if (r.hp <= 0) return;
+      if (r.hp <= 0 || r.isPlane) return;
 
       if (r.isPlayer) {
         // Player: show armed weapon cooldown
@@ -560,9 +571,16 @@ class GameScene extends Phaser.Scene {
         robot.respawning = true;
         this.time.delayedCall(1800, () => this.respawnRobot(robot));
       }
+    } else if (robot.isPlane) {
+      // Plane crash: spinning smoke trail
+      this.tweens.add({
+        targets: robot.sprite, angle: 720, alpha: 0,
+        duration: 800, ease: 'Power2',
+        onComplete: () => robot.sprite.setVisible(false)
+      });
     } else {
       this.time.delayedCall(500, () => {
-        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isTank && r.hp > 0).length;
+        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && r.hp > 0).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
     }
@@ -610,7 +628,7 @@ class GameScene extends Phaser.Scene {
   // Simple enemy AI
   enemyTurn() {
     if (gameOver) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && r.hp > 0);
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && r.hp > 0);
     const players = this.robots.filter(r => r.isPlayer && r.hp > 0 && !r.respawning);
     if (!enemies.length || !players.length) return;
 
@@ -647,7 +665,7 @@ class GameScene extends Phaser.Scene {
     if (gameOver) return;
     const companion = this.robots.find(r => r.isPlayer && r.id === 1 && r.hp > 0 && !r.respawning);
     if (!companion) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && r.hp > 0);
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isPlane && r.hp > 0);
     if (!enemies.length) return;
 
     const now = Date.now();
@@ -709,7 +727,7 @@ class GameScene extends Phaser.Scene {
   tankTurn() {
     if (gameOver) return;
     const tanks = this.robots.filter(r => r.isTank && r.hp > 0);
-    const allTargets = this.robots.filter(r => !r.isTank && r.hp > 0 && !r.respawning);
+    const allTargets = this.robots.filter(r => !r.isTank && !r.isPlane && r.hp > 0 && !r.respawning);
     if (!tanks.length || !allTargets.length) return;
 
     const now = Date.now();
