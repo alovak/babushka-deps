@@ -124,6 +124,20 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0x88aacc, 1);
     g.fillRect(34, 16, 4, 4);    // nose
     g.generateTexture('plane', 40, 36);
+
+    // Helicopter: top-down, cockpit pointing right
+    g.clear();
+    g.fillStyle(0x999999, 0.6);
+    g.fillRect(2, 17, 36, 6);    // main rotor blade (horizontal)
+    g.fillRect(17, 2, 6, 36);    // main rotor blade (vertical)
+    g.fillStyle(0x445566, 1);
+    g.fillEllipse(20, 20, 22, 18); // body
+    g.fillStyle(0x334455, 1);
+    g.fillRect(3, 18, 10, 4);    // tail boom ←
+    g.fillRect(3, 14, 4, 12);    // tail rotor
+    g.fillStyle(0x77aacc, 1);
+    g.fillEllipse(26, 20, 12, 10); // cockpit canopy
+    g.generateTexture('helicopter', 40, 40);
     g.destroy();
   }
 
@@ -210,6 +224,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1600, callback: this.companionTurn, callbackScope: this, loop: true });
     // Tank AI timer
     this.time.addEvent({ delay: 1900, callback: this.tankTurn,      callbackScope: this, loop: true });
+    // Helicopter AI timer
+    this.time.addEvent({ delay: 1300, callback: this.heliTurn,      callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
     document.getElementById('w3').onclick = () => this.hideWeaponMenu();
@@ -225,6 +241,29 @@ class GameScene extends Phaser.Scene {
     this.moveIndicator = this.add.graphics();
     this.shotLine     = this.add.graphics();
     this.rangeCircle  = this.add.graphics();
+
+    // ── Helicopters (orbit patrol, shoot laser at everyone) ───────────────
+    [
+      { cx: 280, cy: 220, r: 110, a: 0,           speed: 0.9 },
+      { cx: 560, cy: 390, r: 100, a: Math.PI,     speed: 1.1 },
+    ].forEach((hd, i) => {
+      const hx = hd.cx + Math.cos(hd.a) * hd.r;
+      const hy = hd.cy + Math.sin(hd.a) * hd.r;
+      const heli = {
+        id: i, isPlayer: false, isTank: false, isPlane: false, isHelicopter: true,
+        x: hx, y: hy, spawnX: hx, spawnY: hy,
+        hp: 38, maxHp: 38, respawning: false,
+        cooldowns: [0, 0, 0],
+        orbitCX: hd.cx, orbitCY: hd.cy, orbitR: hd.r,
+        orbitAngle: hd.a, orbitSpeed: hd.speed,
+        sprite: this.add.image(hx, hy, 'helicopter').setOrigin(0.5),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(hx, hy, '', {fontSize:'1px'}).setOrigin(0.5),
+      };
+      robots.push(heli);
+    });
 
     // ── Planes (added to robots array so they can be shot) ────────────────
     [
@@ -253,6 +292,19 @@ class GameScene extends Phaser.Scene {
     const now = Date.now();
     const dt = delta / 1000; // seconds
 
+    // ── Helicopters orbit movement ─────────────────────────────────────────
+    if (!gameOver) {
+      this.robots.filter(r => r.isHelicopter && r.hp > 0).forEach(h => {
+        h.orbitAngle += h.orbitSpeed * dt;
+        h.x = h.orbitCX + Math.cos(h.orbitAngle) * h.orbitR;
+        h.y = h.orbitCY + Math.sin(h.orbitAngle) * h.orbitR;
+        h.sprite.setPosition(h.x, h.y);
+        // Face direction of travel (tangent)
+        h.sprite.setRotation(h.orbitAngle + Math.PI / 2);
+        this.drawHpBar(h);
+      });
+    }
+
     // ── Planes ────────────────────────────────────────────────────────────
     if (!gameOver) {
       this.robots.filter(r => r.isPlane && r.hp > 0).forEach(p => {
@@ -279,7 +331,7 @@ class GameScene extends Phaser.Scene {
     // ── Cooldown bars ─────────────────────────────────────────────────────
     this.robots.forEach(r => {
       r.cdBar.clear();
-      if (r.hp <= 0 || r.isPlane) return;
+      if (r.hp <= 0 || r.isPlane || r.isHelicopter) return;
 
       if (r.isPlayer) {
         // Player: show armed weapon cooldown
@@ -571,8 +623,8 @@ class GameScene extends Phaser.Scene {
         robot.respawning = true;
         this.time.delayedCall(1800, () => this.respawnRobot(robot));
       }
-    } else if (robot.isPlane) {
-      // Plane crash: spinning smoke trail
+    } else if (robot.isPlane || robot.isHelicopter) {
+      // Crash: spin and fade
       this.tweens.add({
         targets: robot.sprite, angle: 720, alpha: 0,
         duration: 800, ease: 'Power2',
@@ -580,7 +632,7 @@ class GameScene extends Phaser.Scene {
       });
     } else {
       this.time.delayedCall(500, () => {
-        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && r.hp > 0).length;
+        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
     }
@@ -628,7 +680,7 @@ class GameScene extends Phaser.Scene {
   // Simple enemy AI
   enemyTurn() {
     if (gameOver) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && r.hp > 0);
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0);
     const players = this.robots.filter(r => r.isPlayer && r.hp > 0 && !r.respawning);
     if (!enemies.length || !players.length) return;
 
@@ -665,7 +717,7 @@ class GameScene extends Phaser.Scene {
     if (gameOver) return;
     const companion = this.robots.find(r => r.isPlayer && r.id === 1 && r.hp > 0 && !r.respawning);
     if (!companion) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && !r.isPlane && r.hp > 0);
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isPlane && !r.isHelicopter && r.hp > 0);
     if (!enemies.length) return;
 
     const now = Date.now();
@@ -723,11 +775,33 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  // Helicopter AI — orbits and shoots laser at all robots
+  heliTurn() {
+    if (gameOver) return;
+    const helis = this.robots.filter(r => r.isHelicopter && r.hp > 0);
+    const targets = this.robots.filter(r => !r.isHelicopter && !r.isPlane && r.hp > 0 && !r.respawning);
+    if (!helis.length || !targets.length) return;
+
+    const now = Date.now();
+    helis.forEach(heli => {
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(heli.x, heli.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(heli.x, heli.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(heli.x, heli.y, target.x, target.y);
+      const laser = WEAPONS[0]; // laser only
+      if (heli.cooldowns[0] <= now && dist <= laser.range &&
+          !this.lineBlockedByWall(heli.x, heli.y, target.x, target.y)) {
+        this.attackRobot(heli, target, 0);
+      }
+    });
+  }
+
   // Tank AI — attacks everyone (players and enemies alike)
   tankTurn() {
     if (gameOver) return;
     const tanks = this.robots.filter(r => r.isTank && r.hp > 0);
-    const allTargets = this.robots.filter(r => !r.isTank && !r.isPlane && r.hp > 0 && !r.respawning);
+    const allTargets = this.robots.filter(r => !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning);
     if (!tanks.length || !allTargets.length) return;
 
     const now = Date.now();
