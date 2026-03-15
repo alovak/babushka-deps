@@ -101,6 +101,17 @@ class GameScene extends Phaser.Scene {
     g.fillRect(8, 20, 24, 6);
     g.generateTexture('enemy-robot', 36, 36);
 
+    // Shotgun bot: purple
+    g.clear();
+    g.fillStyle(0x882299, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xee88ff, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xaa44cc, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('shotgun-robot', 36, 36);
+
     // Tank: olive top-down view with barrel pointing right
     g.clear();
     g.fillStyle(0x223311, 1);
@@ -185,27 +196,33 @@ class GameScene extends Phaser.Scene {
       makeRobot(500, 300, false, 2, true),  // Tank 3
     ];
 
-    // Shotgun robot (single)
+    // Shotgun bot (single) — purple faction, attacks everyone
     const s1 = makeRobot(550, 75, false, 3);
+    s1.isShotgunBot = true;
     s1.shotgunOnly = true;
+    s1.sprite.setTexture('shotgun-robot');
     s1.label.setText('S1');
-    s1.label.setStyle({ color: '#ffaa00', fontFamily: 'monospace', fontSize: '10px' });
+    s1.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(s1);
 
-    // Dual-shotgun robot 1
+    // Dual-shotgun bot 1 — purple faction, attacks everyone
     const ds1 = makeRobot(200, 490, false, 4);
+    ds1.isShotgunBot = true;
     ds1.shotgunOnly = true;
     ds1.dualShotgun = true;
+    ds1.sprite.setTexture('shotgun-robot');
     ds1.label.setText('DS1');
-    ds1.label.setStyle({ color: '#ff6600', fontFamily: 'monospace', fontSize: '10px' });
+    ds1.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(ds1);
 
-    // Dual-shotgun robot 2
+    // Dual-shotgun bot 2 — purple faction, attacks everyone
     const ds2 = makeRobot(350, 75, false, 5);
+    ds2.isShotgunBot = true;
     ds2.shotgunOnly = true;
     ds2.dualShotgun = true;
+    ds2.sprite.setTexture('shotgun-robot');
     ds2.label.setText('DS2');
-    ds2.label.setStyle({ color: '#ff6600', fontFamily: 'monospace', fontSize: '10px' });
+    ds2.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(ds2);
 
     this.robots = robots;
@@ -249,6 +266,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1900, callback: this.tankTurn,      callbackScope: this, loop: true });
     // Helicopter AI timer
     this.time.addEvent({ delay: 1300, callback: this.heliTurn,      callbackScope: this, loop: true });
+    // Shotgun bot AI timer (neutral faction — attacks everyone)
+    this.time.addEvent({ delay: 1800, callback: this.shotgunBotTurn, callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
     document.getElementById('w3').onclick = () => this.hideWeaponMenu();
@@ -586,8 +605,8 @@ class GameScene extends Phaser.Scene {
     target.hp = Math.max(0, target.hp - dmg);
     this.drawHpBar(target);
 
-    // Shot color: player=weapon color, tank=lime, enemy=enemy color
-    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : w.enemyColor);
+    // Shot color: player=weapon color, tank=lime, shotgun bot=purple, enemy=enemy color
+    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : w.enemyColor));
     this.showShotEffect(attacker, target, shotColor);
     this.showDmgNumber(target.x, target.y, dmg, shotColor);
     this.updateStatus(`${attacker.label.text} стреляет ${w.name} → ${target.label.text}: -${dmg} HP`);
@@ -706,12 +725,14 @@ class GameScene extends Phaser.Scene {
   // Simple enemy AI
   enemyTurn() {
     if (gameOver) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0);
-    const players = this.robots.filter(r => r.isPlayer && r.hp > 0 && !r.respawning);
+    // Exclude shotgun bots — they have their own AI
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && !r.isHelicopter && !r.isShotgunBot && r.hp > 0);
+    // Red robots fight players AND shotgun bots (they attack red too)
+    const players = this.robots.filter(r => (r.isPlayer || r.isShotgunBot) && r.hp > 0 && !r.respawning);
     if (!enemies.length || !players.length) return;
 
     enemies.forEach(enemy => {
-      // Find closest player
+      // Find closest target (player or shotgun bot)
       const target = players.reduce((closest, p) =>
         Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y) <
         Phaser.Math.Distance.Between(enemy.x, enemy.y, closest.x, closest.y) ? p : closest
@@ -720,30 +741,6 @@ class GameScene extends Phaser.Scene {
 
       const now = Date.now();
       const hasLOS = !this.lineBlockedByWall(enemy.x, enemy.y, target.x, target.y);
-
-      // Shotgun-only robots
-      if (enemy.shotgunOnly) {
-        const w = WEAPONS[2];
-        if (enemy.cooldowns[2] <= now && dist <= w.range && hasLOS) {
-          this.attackRobot(enemy, target, 2);
-          // Dual shotgun: second barrel fires 120ms later
-          if (enemy.dualShotgun) {
-            this.time.delayedCall(120, () => {
-              if (target.hp > 0 && !gameOver) {
-                const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
-                target.hp = Math.max(0, target.hp - dmg);
-                this.drawHpBar(target);
-                this.showShotEffect(enemy, target, w.enemyColor);
-                this.showDmgNumber(target.x, target.y, dmg, w.enemyColor);
-                if (target.hp <= 0) this.killRobot(target);
-              }
-            });
-          }
-          return;
-        }
-        this.moveToward(enemy, target.x, target.y, 80);
-        return;
-      }
 
       // Normal robots: pick best available weapon in range
       let bestW = -1;
@@ -844,6 +841,44 @@ class GameScene extends Phaser.Scene {
           !this.lineBlockedByWall(heli.x, heli.y, target.x, target.y)) {
         this.attackRobot(heli, target, 0);
       }
+    });
+  }
+
+  // Shotgun Bot AI — purple faction, attacks EVERYONE (players, red, tanks, helis)
+  shotgunBotTurn() {
+    if (gameOver) return;
+    const bots = this.robots.filter(r => r.isShotgunBot && r.hp > 0);
+    // Target: any robot that is NOT a shotgun bot and NOT a plane
+    const targets = this.robots.filter(r => !r.isShotgunBot && !r.isPlane && r.hp > 0 && !r.respawning);
+    if (!bots.length || !targets.length) return;
+
+    const now = Date.now();
+    bots.forEach(bot => {
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(bot.x, bot.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(bot.x, bot.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(bot.x, bot.y, target.x, target.y);
+      const hasLOS = !this.lineBlockedByWall(bot.x, bot.y, target.x, target.y);
+      const w = WEAPONS[2]; // shotgun only
+
+      if (bot.cooldowns[2] <= now && dist <= w.range && hasLOS) {
+        this.attackRobot(bot, target, 2);
+        if (bot.dualShotgun) {
+          this.time.delayedCall(120, () => {
+            if (target.hp > 0 && !gameOver) {
+              const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+              target.hp = Math.max(0, target.hp - dmg);
+              this.drawHpBar(target);
+              this.showShotEffect(bot, target, 0xcc44ff);
+              this.showDmgNumber(target.x, target.y, dmg, 0xcc44ff);
+              if (target.hp <= 0) this.killRobot(target);
+            }
+          });
+        }
+        return;
+      }
+      this.moveToward(bot, target.x, target.y, 80);
     });
   }
 
