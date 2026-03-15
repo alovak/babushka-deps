@@ -39,7 +39,8 @@
     <button class="weapon-btn" id="w0"></button>
     <button class="weapon-btn" id="w1"></button>
     <button class="weapon-btn" id="w2"></button>
-    <button class="weapon-btn" id="w3" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+    <button class="weapon-btn" id="w3"></button>
+    <button class="weapon-btn" id="w4" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
   </div>
 </div>
 
@@ -50,9 +51,10 @@ const W = 800, H = 600;
 const TILE = 40;
 
 const WEAPONS = [
-  { name: '⚡ Лазер',    dmg: 15, cd: 1000, range: 300, color: 0x00ffff, enemyColor: 0xff2222, desc: 'Быстро / слабый' },
-  { name: '🚀 Ракета',   dmg: 45, cd: 3500, range: 260, color: 0xff8800, enemyColor: 0xcc00ff, desc: 'Медленно / сильный' },
-  { name: '💥 Дробовик', dmg: 30, cd: 2000, range: 150, color: 0xffff00, enemyColor: 0xff4400, desc: 'Средне / близко' },
+  { name: '⚡ Лазер',    dmg: 15,  cd: 1000, range: 300, color: 0x00ffff, enemyColor: 0xff2222, desc: 'Быстро / слабый' },
+  { name: '🚀 Ракета',   dmg: 45,  cd: 3500, range: 260, color: 0xff8800, enemyColor: 0xcc00ff, desc: 'Медленно / сильный' },
+  { name: '💥 Дробовик', dmg: 30,  cd: 2000, range: 150, color: 0xffff00, enemyColor: 0xff4400, desc: 'Средне / близко' },
+  { name: '💣 Граната',  dmg: 999, cd: 7000, range: 280, color: 0x44ff44, desc: 'Через стены / убивает', noLOS: true, playerOnly: true },
 ];
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
@@ -270,8 +272,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1800, callback: this.shotgunBotTurn, callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
-    document.getElementById('w3').onclick = () => this.hideWeaponMenu();
-    [0, 1, 2].forEach(i => {
+    document.getElementById('w4').onclick = () => this.hideWeaponMenu();
+    [0, 1, 2, 3].forEach(i => {
       const btn = document.getElementById('w' + i);
       btn.ontouchstart = btn.onclick = (e) => {
         e.stopPropagation();
@@ -431,9 +433,10 @@ class GameScene extends Phaser.Scene {
         return;
       }
     } else {
-      // Auto: pick best available in range
+      // Auto: pick best available in range (skip playerOnly — must be selected manually)
       wIdx = -1;
       WEAPONS.forEach((w, i) => {
+        if (w.playerOnly) return;
         if (attacker.cooldowns[i] <= now && dist <= w.range)
           if (wIdx < 0 || w.dmg > WEAPONS[wIdx].dmg) wIdx = i;
       });
@@ -518,15 +521,16 @@ class GameScene extends Phaser.Scene {
     WEAPONS.forEach((w, i) => {
       const btn = document.getElementById('w' + i);
       const cdLeft = Math.max(0, robot.cooldowns[i] - now);
-      btn.innerHTML = `${w.name}<br><small style="color:#aaa;font-size:12px">${w.desc} · радиус ${w.range}</small>` +
+      const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
+      btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc} · радиус ${w.range}</small>` +
         (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
       btn.disabled = cdLeft > 0;
     });
     // Position near robot, keep inside canvas
-    let mx = px + 14, my = py - 80;
+    let mx = px + 14, my = py - 100;
     if (mx + 250 > W) mx = px - 254;
     if (my < 0) my = 8;
-    if (my + 220 > H) my = H - 225;
+    if (my + 260 > H) my = H - 265;
     menu.style.left = mx + 'px';
     menu.style.top  = my + 'px';
     menu.style.display = 'block';
@@ -594,20 +598,24 @@ class GameScene extends Phaser.Scene {
       this.updateStatus(`Слишком далеко! Максимальный радиус ${w.name}: ${w.range}`);
       return;
     }
-    if (this.lineBlockedByWall(attacker.x, attacker.y, target.x, target.y)) {
+    if (!w.noLOS && this.lineBlockedByWall(attacker.x, attacker.y, target.x, target.y)) {
       this.updateStatus('Стена блокирует выстрел! Найди позицию с прямой видимостью.');
       return;
     }
     // Set cooldown
     attacker.cooldowns[wIdx] = Date.now() + w.cd;
-    // Apply damage with small random variance
-    const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+    // Apply damage (grenade = instant kill, others = random variance)
+    const dmg = w.noLOS ? w.dmg : Math.round(w.dmg * (0.85 + Math.random() * 0.3));
     target.hp = Math.max(0, target.hp - dmg);
     this.drawHpBar(target);
 
     // Shot color: player=weapon color, tank=lime, shotgun bot=purple, enemy=enemy color
     const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : w.enemyColor));
-    this.showShotEffect(attacker, target, shotColor);
+    if (wIdx === 3) {
+      this.showGrenadeEffect(attacker, target);
+    } else {
+      this.showShotEffect(attacker, target, shotColor);
+    }
     this.showDmgNumber(target.x, target.y, dmg, shotColor);
     this.updateStatus(`${attacker.label.text} стреляет ${w.name} → ${target.label.text}: -${dmg} HP`);
 
@@ -630,9 +638,53 @@ class GameScene extends Phaser.Scene {
     this.time.delayedCall(120, () => { g.clear(); flash.destroy(); impact.destroy(); });
   }
 
+  showGrenadeEffect(from, to) {
+    // Dashed arc trajectory (goes over walls)
+    const g = this.add.graphics();
+    g.lineStyle(2, 0x44ff44, 0.9);
+    const steps = 16;
+    const peakX = (from.x + to.x) / 2;
+    const peakY = Math.min(from.y, to.y) - 70;
+    // Draw dotted Bezier arc
+    for (let t = 0; t < 1; t += 1 / steps) {
+      if (Math.floor(t * steps) % 2 === 0) {
+        const t1 = t, t2 = t + 1 / steps;
+        const x1 = (1-t1)*(1-t1)*from.x + 2*(1-t1)*t1*peakX + t1*t1*to.x;
+        const y1 = (1-t1)*(1-t1)*from.y + 2*(1-t1)*t1*peakY + t1*t1*to.y;
+        const x2 = (1-t2)*(1-t2)*from.x + 2*(1-t2)*t2*peakX + t2*t2*to.x;
+        const y2 = (1-t2)*(1-t2)*from.y + 2*(1-t2)*t2*peakY + t2*t2*to.y;
+        g.lineBetween(x1, y1, x2, y2);
+      }
+    }
+    // Grenade icon moving along arc
+    const icon = this.add.text(from.x, from.y, '💣', { fontSize: '16px' }).setOrigin(0.5);
+    this.tweens.add({
+      targets: { t: 0 }, t: 1, duration: 400,
+      onUpdate: (_, obj) => {
+        const t = obj.t;
+        icon.x = (1-t)*(1-t)*from.x + 2*(1-t)*t*peakX + t*t*to.x;
+        icon.y = (1-t)*(1-t)*from.y + 2*(1-t)*t*peakY + t*t*to.y;
+      },
+      onComplete: () => {
+        icon.destroy(); g.destroy();
+        // Big green explosion
+        const ex = this.add.graphics();
+        [0x44ff44, 0xaaff44, 0xffffff, 0xffff00].forEach((c, i) => {
+          this.time.delayedCall(i * 70, () => {
+            ex.clear();
+            ex.fillStyle(c, 1);
+            ex.fillCircle(to.x, to.y, 28 + i * 10);
+          });
+        });
+        this.time.delayedCall(400, () => ex.destroy());
+      }
+    });
+  }
+
   showDmgNumber(x, y, dmg, color) {
-    const txt = this.add.text(x, y - 20, `-${dmg}`, {
-      fontSize: '18px', color: '#' + color.toString(16).padStart(6, '0'),
+    const label = dmg >= 999 ? '💀 УБИТ' : `-${dmg}`;
+    const txt = this.add.text(x, y - 20, label, {
+      fontSize: dmg >= 999 ? '22px' : '18px', color: '#' + color.toString(16).padStart(6, '0'),
       fontFamily: 'monospace', fontStyle: 'bold',
       stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5);
@@ -775,9 +827,10 @@ class GameScene extends Phaser.Scene {
     );
     const dist = Phaser.Math.Distance.Between(companion.x, companion.y, target.x, target.y);
 
-    // Try to shoot: pick best weapon in range with clear line of sight
+    // Try to shoot: pick best weapon in range with clear line of sight (no playerOnly weapons)
     let bestW = -1;
     WEAPONS.forEach((w, i) => {
+      if (w.playerOnly) return;
       if (companion.cooldowns[i] <= now && dist <= w.range &&
           !this.lineBlockedByWall(companion.x, companion.y, target.x, target.y)) {
         if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
