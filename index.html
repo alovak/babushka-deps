@@ -507,8 +507,10 @@ class GameScene extends Phaser.Scene {
     robot.sprite.setPosition(robot.spawnX, robot.spawnY);
     robot.label.setPosition(robot.spawnX, robot.spawnY + 24);
     robot.sprite.clearTint().setAlpha(1);
-    selectedRobot = robot;
-    this.drawSelectionRing(robot);
+    if (robot.id === 0) {
+      selectedRobot = robot;
+      this.drawSelectionRing(robot);
+    }
     this.drawHpBar(robot);
     // Flash white to signal respawn
     this.tweens.add({
