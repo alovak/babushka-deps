@@ -113,6 +113,17 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0x334422, 1);
     g.fillRect(20, 15, 18, 6);  // barrel →
     g.generateTexture('tank', 40, 36);
+
+    // Plane: top-down, pointing right (east)
+    g.clear();
+    g.fillStyle(0xddeeff, 1);
+    g.fillRect(2,  15, 36, 6);   // fuselage
+    g.fillRect(14,  3, 5, 30);   // main wings
+    g.fillRect(2,  15, 10, 6);   // rear body
+    g.fillRect(3,  14,  5, 8);   // tail fin
+    g.fillStyle(0x88aacc, 1);
+    g.fillRect(34, 16, 4, 4);    // nose
+    g.generateTexture('plane', 40, 36);
     g.destroy();
   }
 
@@ -214,10 +225,45 @@ class GameScene extends Phaser.Scene {
     this.moveIndicator = this.add.graphics();
     this.shotLine     = this.add.graphics();
     this.rangeCircle  = this.add.graphics();
+
+    // ── Planes ────────────────────────────────────────────────────────────
+    this.planes = [
+      { x: -30, y: 160, angle: 0.15,             speed: 130, dropIn: 2.5 },
+      { x: W+30, y: 440, angle: Math.PI - 0.2,   speed: 115, dropIn: 1.2 },
+      { x: 200,  y: -30, angle: Math.PI/2 + 0.1, speed: 120, dropIn: 3.8 },
+    ];
+    this.planes.forEach(p => {
+      p.sprite = this.add.image(p.x, p.y, 'plane').setOrigin(0.5).setScale(1.1);
+      p.sprite.setRotation(p.angle);
+    });
   }
 
-  update() {
+  update(time, delta) {
     const now = Date.now();
+    const dt = delta / 1000; // seconds
+
+    // ── Planes ────────────────────────────────────────────────────────────
+    if (!gameOver) {
+      this.planes.forEach(p => {
+        p.x += Math.cos(p.angle) * p.speed * dt;
+        p.y += Math.sin(p.angle) * p.speed * dt;
+        // Wrap around edges
+        if (p.x < -60) p.x = W + 60;
+        else if (p.x > W + 60) p.x = -60;
+        if (p.y < -60) p.y = H + 60;
+        else if (p.y > H + 60) p.y = -60;
+        p.sprite.setPosition(p.x, p.y);
+
+        // Drop bomb countdown
+        p.dropIn -= dt;
+        if (p.dropIn <= 0) {
+          p.dropIn = 3.5 + Math.random() * 2;
+          if (p.x > 0 && p.x < W && p.y > 0 && p.y < H) {
+            this.dropBomb(p.x, p.y);
+          }
+        }
+      });
+    }
 
     // ── Cooldown bars ─────────────────────────────────────────────────────
     this.robots.forEach(r => {
@@ -688,6 +734,53 @@ class GameScene extends Phaser.Scene {
 
       // Move toward target
       this.moveToward(tank, target.x, target.y, 70);
+    });
+  }
+
+  dropBomb(x, y) {
+    // Warning shadow that pulses
+    const shadow = this.add.graphics();
+    const drawShadow = (alpha) => {
+      shadow.clear();
+      shadow.fillStyle(0xff6600, alpha);
+      shadow.fillCircle(x, y, 65);
+      shadow.lineStyle(2, 0xffaa00, alpha + 0.2);
+      shadow.strokeCircle(x, y, 65);
+    };
+    drawShadow(0.25);
+    this.tweens.add({
+      targets: { v: 0.25 }, v: 0.5,
+      duration: 300, yoyo: true, repeat: 3,
+      onUpdate: (_, obj) => drawShadow(obj.v)
+    });
+    this.time.delayedCall(1500, () => {
+      shadow.destroy();
+      this.explodeBomb(x, y);
+    });
+  }
+
+  explodeBomb(x, y) {
+    const RADIUS = 65, DMG = 40;
+    // Explosion visuals
+    const ex = this.add.graphics();
+    [0xff2200, 0xff7700, 0xffdd00, 0xffffff].forEach((c, i) => {
+      this.time.delayedCall(i * 60, () => {
+        ex.clear();
+        ex.fillStyle(c, 1);
+        ex.fillCircle(x, y, RADIUS * (0.4 + i * 0.2));
+      });
+    });
+    this.time.delayedCall(350, () => ex.destroy());
+
+    // Damage all robots and tanks in radius
+    this.robots.forEach(r => {
+      if (r.hp <= 0 || r.respawning) return;
+      if (Phaser.Math.Distance.Between(x, y, r.x, r.y) < RADIUS) {
+        r.hp = Math.max(0, r.hp - DMG);
+        this.drawHpBar(r);
+        this.showDmgNumber(r.x, r.y, DMG, 0xff7700);
+        if (r.hp <= 0) this.killRobot(r);
+      }
     });
   }
 
