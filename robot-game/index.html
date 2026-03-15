@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Robot Tactics</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: monospace; }
+    #game-container { position: relative; }
+    #ui-overlay { position: absolute; top: 10px; left: 10px; color: #00ff88; font-size: 14px; pointer-events: none; }
+    #status-bar { background: rgba(0,0,0,0.7); padding: 6px 10px; border: 1px solid #00ff88; border-radius: 4px; margin-bottom: 6px; }
+    #weapon-menu {
+      display: none; position: absolute;
+      background: rgba(10, 10, 30, 0.95);
+      border: 2px solid #00ff88; border-radius: 6px;
+      padding: 8px; z-index: 100;
+    }
+    .weapon-btn {
+      display: block; width: 180px; padding: 8px 12px; margin: 4px 0;
+      background: rgba(0, 255, 136, 0.1); border: 1px solid #00ff88;
+      color: #00ff88; font-family: monospace; font-size: 13px;
+      cursor: pointer; border-radius: 4px; text-align: left; transition: background 0.15s;
+    }
+    .weapon-btn:hover { background: rgba(0, 255, 136, 0.3); }
+    .weapon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .weapon-btn .cooldown { float: right; color: #ff6644; font-size: 11px; }
+  </style>
+</head>
+<body>
+<div id="game-container">
+  <div id="ui-overlay">
+    <div id="status-bar">Кликни на своего робота</div>
+  </div>
+  <div id="weapon-menu">
+    <div style="color:#aaffcc; margin-bottom:6px; font-size:12px;">ВЫБЕРИ ОРУЖИЕ</div>
+    <button class="weapon-btn" id="w0"></button>
+    <button class="weapon-btn" id="w1"></button>
+    <button class="weapon-btn" id="w2"></button>
+    <button class="weapon-btn" id="w3" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+<script>
+// ── CONFIG ─────────────────────────────────────────────────────────────────
+const W = 800, H = 600;
+const TILE = 40;
+
+const WEAPONS = [
+  { name: '⚡ Лазер',   dmg: 15, cd: 1000,  range: 300, color: 0x00ffff,  desc: 'Быстро / слабый' },
+  { name: '🚀 Ракета',  dmg: 45, cd: 3500,  range: 260, color: 0xff6600,  desc: 'Медленно / сильный' },
+  { name: '💥 Дробовик',dmg: 30, cd: 2000,  range: 150, color: 0xffff00,  desc: 'Средне / близко' },
+];
+
+// ── GAME STATE ──────────────────────────────────────────────────────────────
+let selectedRobot = null;
+let selectedWeapon = null;
+let waitingForTarget = false;
+let robots = [];
+let gameOver = false;
+
+// ── OBSTACLE LAYOUT ─────────────────────────────────────────────────────────
+const WALLS = [
+  { x: 200, y: 120, w: 40,  h: 120 },
+  { x: 400, y: 80,  w: 120, h: 40  },
+  { x: 560, y: 200, w: 40,  h: 160 },
+  { x: 300, y: 300, w: 160, h: 40  },
+  { x: 120, y: 380, w: 40,  h: 120 },
+  { x: 600, y: 400, w: 120, h: 40  },
+  { x: 380, y: 460, w: 40,  h: 100 },
+];
+
+// ── PHASER SCENE ─────────────────────────────────────────────────────────────
+class GameScene extends Phaser.Scene {
+  constructor() { super({ key: 'GameScene' }); }
+
+  preload() {
+    // Draw robot texture programmatically
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    // Player robot: blue
+    g.clear();
+    g.fillStyle(0x2244cc, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0x88aaff, 1);
+    g.fillRect(10, 8, 8, 8);  // left eye
+    g.fillRect(22, 8, 8, 8);  // right eye
+    g.fillStyle(0x4466ee, 1);
+    g.fillRect(8, 20, 24, 6); // chest
+    g.generateTexture('player-robot', 36, 36);
+
+    g.clear();
+    g.fillStyle(0xcc2222, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xff8888, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xee4444, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('enemy-robot', 36, 36);
+    g.destroy();
+  }
+
+  create() {
+    // Background grid
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0d0d1a, 1);
+    bg.fillRect(0, 0, W, H);
+    bg.lineStyle(1, 0x1a1a3a, 0.6);
+    for (let x = 0; x <= W; x += TILE) bg.lineBetween(x, 0, x, H);
+    for (let y = 0; y <= H; y += TILE) bg.lineBetween(0, y, W, y);
+
+    // Walls
+    this.wallGraphics = this.add.graphics();
+    this.wallRects = WALLS.map(w => new Phaser.Geom.Rectangle(w.x, w.y, w.w, w.h));
+    this.drawWalls();
+
+    // Robots
+    const makeRobot = (x, y, isPlayer, id) => ({
+      id, isPlayer, x, y,
+      hp: 100, maxHp: 100,
+      cooldowns: [0, 0, 0],
+      sprite: this.add.image(x, y, isPlayer ? 'player-robot' : 'enemy-robot').setOrigin(0.5),
+      selectionRing: this.add.graphics(),
+      hpBar: this.add.graphics(),
+      label: this.add.text(x, y + 24, isPlayer ? `P${id+1}` : `E${id+1}`,
+        { fontSize: '10px', color: isPlayer ? '#88aaff' : '#ff8888', fontFamily: 'monospace' }).setOrigin(0.5),
+    });
+
+    robots = [
+      makeRobot(100, 200, true,  0),
+      makeRobot(100, 420, true,  1),
+      makeRobot(680, 160, false, 0),
+      makeRobot(680, 440, false, 1),
+    ];
+
+    this.robots = robots;
+    this.updateAllHpBars();
+
+    // Click handler
+    this.input.on('pointerdown', (ptr) => this.handleClick(ptr.x, ptr.y));
+
+    // Enemy AI timer
+    this.time.addEvent({ delay: 2200, callback: this.enemyTurn, callbackScope: this, loop: true });
+
+    // Setup weapon menu buttons
+    document.getElementById('w3').onclick = () => this.cancelSelection();
+    [0, 1, 2].forEach(i => {
+      document.getElementById('w' + i).onclick = () => this.selectWeapon(i);
+    });
+
+    // Move indicator
+    this.moveIndicator = this.add.graphics();
+    this.shotLine = this.add.graphics();
+  }
+
+  drawWalls() {
+    const g = this.wallGraphics;
+    g.clear();
+    WALLS.forEach(w => {
+      g.fillStyle(0x334455, 1);
+      g.fillRect(w.x, w.y, w.w, w.h);
+      g.lineStyle(2, 0x5577aa, 1);
+      g.strokeRect(w.x, w.y, w.w, w.h);
+      // rivets
+      g.fillStyle(0x667788, 1);
+      g.fillRect(w.x + 4, w.y + 4, 5, 5);
+      g.fillRect(w.x + w.w - 9, w.y + 4, 5, 5);
+      g.fillRect(w.x + 4, w.y + w.h - 9, 5, 5);
+      g.fillRect(w.x + w.w - 9, w.y + w.h - 9, 5, 5);
+    });
+  }
+
+  isWall(x, y) {
+    const PAD = 18;
+    return this.wallRects.some(r =>
+      x > r.x - PAD && x < r.x + r.width + PAD &&
+      y > r.y - PAD && y < r.y + r.height + PAD
+    );
+  }
+
+  clampToMap(x, y) {
+    return { x: Phaser.Math.Clamp(x, 25, W - 25), y: Phaser.Math.Clamp(y, 25, H - 25) };
+  }
+
+  updateAllHpBars() {
+    this.robots.forEach(r => this.drawHpBar(r));
+  }
+
+  drawHpBar(robot) {
+    const g = robot.hpBar;
+    g.clear();
+    const bw = 36, bh = 5;
+    const bx = robot.x - bw / 2, by = robot.y - 28;
+    g.fillStyle(0x330000, 1); g.fillRect(bx, by, bw, bh);
+    const pct = Math.max(0, robot.hp / robot.maxHp);
+    const col = pct > 0.5 ? 0x00dd44 : pct > 0.25 ? 0xffaa00 : 0xff2200;
+    g.fillStyle(col, 1); g.fillRect(bx, by, bw * pct, bh);
+    g.lineStyle(1, 0x888888, 1); g.strokeRect(bx, by, bw, bh);
+  }
+
+  drawSelectionRing(robot) {
+    this.robots.forEach(r => r.selectionRing.clear());
+    if (!robot) return;
+    const g = robot.selectionRing;
+    g.lineStyle(2, 0x00ff88, 1);
+    g.strokeCircle(robot.x, robot.y, 22);
+    // corner markers
+    g.lineStyle(2, 0x00ff88, 1);
+    [-1, 1].forEach(sx => [-1, 1].forEach(sy => {
+      g.lineBetween(robot.x + sx * 22, robot.y + sy * 16, robot.x + sx * 22, robot.y + sy * 22);
+      g.lineBetween(robot.x + sx * 16, robot.y + sy * 22, robot.x + sx * 22, robot.y + sy * 22);
+    }));
+  }
+
+  handleClick(x, y) {
+    if (gameOver) return;
+
+    // Click on a robot?
+    const clicked = this.robots.find(r => r.hp > 0 && Phaser.Math.Distance.Between(x, y, r.x, r.y) < 22);
+
+    if (waitingForTarget) {
+      if (clicked && !clicked.isPlayer) {
+        this.attackRobot(selectedRobot, clicked, selectedWeapon);
+      } else if (!clicked) {
+        this.moveRobot(selectedRobot, x, y);
+      }
+      this.cancelSelection();
+      return;
+    }
+
+    if (clicked && clicked.isPlayer) {
+      selectedRobot = clicked;
+      selectedWeapon = null;
+      waitingForTarget = false;
+      this.drawSelectionRing(clicked);
+      this.showWeaponMenu(x, y, clicked);
+      this.updateStatus(`${clicked.label.text} выбран — выбери оружие или двигайся`);
+      return;
+    }
+
+    // Click empty space without selection
+    if (selectedRobot && !document.getElementById('weapon-menu').style.display.includes('block')) {
+      this.moveRobot(selectedRobot, x, y);
+      this.cancelSelection();
+    }
+  }
+
+  showWeaponMenu(px, py, robot) {
+    const menu = document.getElementById('weapon-menu');
+    const now = Date.now();
+    WEAPONS.forEach((w, i) => {
+      const btn = document.getElementById('w' + i);
+      const cdLeft = Math.max(0, robot.cooldowns[i] - now);
+      btn.innerHTML = `${w.name} <small style="color:#aaa">${w.desc}</small>` +
+        (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
+      btn.disabled = cdLeft > 0;
+    });
+    // Position near click, keep inside window
+    let mx = px + 10, my = py + 10;
+    if (mx + 200 > W) mx = px - 200;
+    if (my + 180 > H) my = py - 180;
+    menu.style.left = mx + 'px';
+    menu.style.top  = my + 'px';
+    menu.style.display = 'block';
+  }
+
+  hideWeaponMenu() {
+    document.getElementById('weapon-menu').style.display = 'none';
+  }
+
+  selectWeapon(idx) {
+    this.hideWeaponMenu();
+    selectedWeapon = idx;
+    waitingForTarget = true;
+    const w = WEAPONS[idx];
+    this.updateStatus(`${w.name} выбран — кликни на врага для атаки или на карту для движения (радиус: ${w.range})`);
+    // Show range ring
+    this.moveIndicator.clear();
+    this.moveIndicator.lineStyle(1, w.color, 0.3);
+    this.moveIndicator.strokeCircle(selectedRobot.x, selectedRobot.y, w.range);
+  }
+
+  cancelSelection() {
+    this.hideWeaponMenu();
+    selectedRobot = null;
+    selectedWeapon = null;
+    waitingForTarget = false;
+    this.drawSelectionRing(null);
+    this.moveIndicator.clear();
+    this.updateStatus('Кликни на своего робота');
+  }
+
+  moveRobot(robot, tx, ty) {
+    const clamped = this.clampToMap(tx, ty);
+    if (this.isWall(clamped.x, clamped.y)) {
+      this.updateStatus('Там стена! Выбери другое место.');
+      return;
+    }
+    const dist = Phaser.Math.Distance.Between(robot.x, robot.y, clamped.x, clamped.y);
+    const MAX_MOVE = 200;
+    if (dist > MAX_MOVE) {
+      clamped.x = robot.x + (clamped.x - robot.x) * MAX_MOVE / dist;
+      clamped.y = robot.y + (clamped.y - robot.y) * MAX_MOVE / dist;
+    }
+    // Move animation
+    this.tweens.add({
+      targets: [robot.sprite, robot.hpBar, robot.selectionRing, robot.label],
+      x: clamped.x, y: (target) => {
+        if (target === robot.hpBar) return clamped.y;
+        if (target === robot.label) return clamped.y + 24;
+        return clamped.y;
+      },
+      duration: 300, ease: 'Power2',
+      onUpdate: () => {
+        robot.x = robot.sprite.x;
+        robot.y = robot.sprite.y;
+        this.drawHpBar(robot);
+      },
+      onComplete: () => {
+        robot.x = clamped.x;
+        robot.y = clamped.y;
+        this.updateStatus('Кликни на своего робота');
+      }
+    });
+    // Move indicator
+    this.moveIndicator.clear();
+    this.moveIndicator.lineStyle(1, 0x00ff88, 0.5);
+    this.moveIndicator.lineBetween(robot.x, robot.y, clamped.x, clamped.y);
+    this.time.delayedCall(400, () => this.moveIndicator.clear());
+  }
+
+  attackRobot(attacker, target, wIdx) {
+    const w = WEAPONS[wIdx];
+    const dist = Phaser.Math.Distance.Between(attacker.x, attacker.y, target.x, target.y);
+    if (dist > w.range) {
+      this.updateStatus(`Слишком далеко! Максимальный радиус ${w.name}: ${w.range}`);
+      return;
+    }
+    // Set cooldown
+    attacker.cooldowns[wIdx] = Date.now() + w.cd;
+    // Apply damage with small random variance
+    const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+    target.hp = Math.max(0, target.hp - dmg);
+    this.drawHpBar(target);
+
+    // Shot effect
+    this.showShotEffect(attacker, target, w);
+    this.showDmgNumber(target.x, target.y, dmg, w.color);
+    this.updateStatus(`${attacker.label.text} стреляет ${w.name} → ${target.label.text}: -${dmg} HP`);
+
+    if (target.hp <= 0) {
+      this.killRobot(target);
+    }
+  }
+
+  showShotEffect(from, to, weapon) {
+    const g = this.shotLine;
+    g.clear();
+    g.lineStyle(3, weapon.color, 1);
+    g.lineBetween(from.x, from.y, to.x, to.y);
+    // Muzzle flash
+    const flash = this.add.graphics();
+    flash.fillStyle(weapon.color, 1);
+    flash.fillCircle(from.x, from.y, 8);
+    // Impact
+    const impact = this.add.graphics();
+    impact.fillStyle(weapon.color, 0.8);
+    impact.fillCircle(to.x, to.y, 12);
+    this.time.delayedCall(120, () => { g.clear(); flash.destroy(); impact.destroy(); });
+  }
+
+  showDmgNumber(x, y, dmg, color) {
+    const txt = this.add.text(x, y - 20, `-${dmg}`, {
+      fontSize: '18px', color: '#' + color.toString(16).padStart(6, '0'),
+      fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    this.tweens.add({
+      targets: txt, y: y - 60, alpha: 0, duration: 900,
+      onComplete: () => txt.destroy()
+    });
+  }
+
+  killRobot(robot) {
+    // Explosion effect
+    const ex = this.add.graphics();
+    [0xff4400, 0xffaa00, 0xffff00].forEach((c, i) => {
+      this.time.delayedCall(i * 80, () => {
+        ex.clear();
+        ex.fillStyle(c, 1);
+        ex.fillCircle(robot.x, robot.y, 24 + i * 6);
+      });
+    });
+    this.time.delayedCall(300, () => {
+      ex.destroy();
+      robot.sprite.setAlpha(0.25).setTint(0x444444);
+      robot.hpBar.clear();
+    });
+
+    // Check win/lose
+    this.time.delayedCall(500, () => this.checkEndgame());
+  }
+
+  checkEndgame() {
+    const playersAlive = this.robots.filter(r => r.isPlayer && r.hp > 0).length;
+    const enemiesAlive = this.robots.filter(r => !r.isPlayer && r.hp > 0).length;
+    if (playersAlive === 0) {
+      gameOver = true;
+      this.showEndScreen('☠ ПОРАЖЕНИЕ', '#ff2200');
+    } else if (enemiesAlive === 0) {
+      gameOver = true;
+      this.showEndScreen('🏆 ПОБЕДА!', '#00ff88');
+    }
+  }
+
+  showEndScreen(msg, color) {
+    this.add.rectangle(W / 2, H / 2, 320, 100, 0x000000, 0.85);
+    this.add.text(W / 2, H / 2, msg, {
+      fontSize: '42px', color, fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5);
+    this.add.text(W / 2, H / 2 + 36, 'Обнови страницу для новой игры', {
+      fontSize: '14px', color: '#aaaaaa', fontFamily: 'monospace',
+    }).setOrigin(0.5);
+  }
+
+  // Simple enemy AI
+  enemyTurn() {
+    if (gameOver) return;
+    const enemies = this.robots.filter(r => !r.isPlayer && r.hp > 0);
+    const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
+    if (!enemies.length || !players.length) return;
+
+    const now = Date.now();
+    enemies.forEach(enemy => {
+      // Find closest player
+      const target = players.reduce((closest, p) =>
+        Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y) <
+        Phaser.Math.Distance.Between(enemy.x, enemy.y, closest.x, closest.y) ? p : closest
+      );
+      const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
+
+      // Pick best available weapon in range
+      let bestW = -1;
+      WEAPONS.forEach((w, i) => {
+        if (enemy.cooldowns[i] <= now && dist <= w.range) {
+          if (bestW < 0 || WEAPONS[i].dmg > WEAPONS[bestW].dmg) bestW = i;
+        }
+      });
+
+      if (bestW >= 0) {
+        // Attack
+        this.attackRobot(enemy, target, bestW);
+        this.drawSelectionRing({ ...enemy, selectionRing: enemy.selectionRing });
+      } else {
+        // Move toward player
+        const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
+        const moveD = 80;
+        let nx = enemy.x + Math.cos(angle) * moveD;
+        let ny = enemy.y + Math.sin(angle) * moveD;
+        const c = this.clampToMap(nx, ny);
+        if (!this.isWall(c.x, c.y)) {
+          this.tweens.add({
+            targets: [enemy.sprite, enemy.hpBar, enemy.selectionRing, enemy.label],
+            x: c.x,
+            y: (t) => t === enemy.label ? c.y + 24 : c.y,
+            duration: 400, ease: 'Power1',
+            onUpdate: () => {
+              enemy.x = enemy.sprite.x;
+              enemy.y = enemy.sprite.y;
+              this.drawHpBar(enemy);
+            },
+            onComplete: () => { enemy.x = c.x; enemy.y = c.y; }
+          });
+        }
+      }
+    });
+  }
+
+  updateStatus(msg) {
+    document.getElementById('status-bar').textContent = msg;
+  }
+}
+
+// ── BOOT ────────────────────────────────────────────────────────────────────
+const game = new Phaser.Game({
+  type: Phaser.AUTO,
+  width: W, height: H,
+  parent: 'game-container',
+  backgroundColor: '#0d0d1a',
+  scene: GameScene,
+});
+</script>
+</body>
+</html>
