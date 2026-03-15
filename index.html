@@ -676,17 +676,12 @@ class GameScene extends Phaser.Scene {
       // Rotate sprite to face target
       tank.sprite.setRotation(Math.atan2(target.y - tank.y, target.x - tank.x));
 
-      // Shoot if possible
-      let bestW = -1;
-      WEAPONS.forEach((w, i) => {
-        if (tank.cooldowns[i] <= now && dist <= w.range &&
-            !this.lineBlockedByWall(tank.x, tank.y, target.x, target.y)) {
-          if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
-        }
-      });
-
-      if (bestW >= 0) {
-        this.attackRobot(tank, target, bestW);
+      // Tanks only fire rockets (weapon index 1)
+      const rocketIdx = 1;
+      const rocket = WEAPONS[rocketIdx];
+      if (tank.cooldowns[rocketIdx] <= now && dist <= rocket.range &&
+          !this.lineBlockedByWall(tank.x, tank.y, target.x, target.y)) {
+        this.attackRobot(tank, target, rocketIdx);
         return;
       }
 
