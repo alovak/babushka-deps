@@ -185,6 +185,21 @@ class GameScene extends Phaser.Scene {
       makeRobot(500, 300, false, 2, true),  // Tank 3
     ];
 
+    // Shotgun robot (single)
+    const s1 = makeRobot(550, 75, false, 3);
+    s1.shotgunOnly = true;
+    s1.label.setText('S1');
+    s1.label.setStyle({ color: '#ffaa00', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(s1);
+
+    // Dual-shotgun robot
+    const ds1 = makeRobot(200, 490, false, 4);
+    ds1.shotgunOnly = true;
+    ds1.dualShotgun = true;
+    ds1.label.setText('DS1');
+    ds1.label.setStyle({ color: '#ff6600', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(ds1);
+
     this.robots = robots;
     this.updateAllHpBars();
 
@@ -695,14 +710,38 @@ class GameScene extends Phaser.Scene {
       );
       const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
 
-      // Pick best available weapon in range with clear line of sight
       const now = Date.now();
+      const hasLOS = !this.lineBlockedByWall(enemy.x, enemy.y, target.x, target.y);
+
+      // Shotgun-only robots
+      if (enemy.shotgunOnly) {
+        const w = WEAPONS[2];
+        if (enemy.cooldowns[2] <= now && dist <= w.range && hasLOS) {
+          this.attackRobot(enemy, target, 2);
+          // Dual shotgun: second barrel fires 120ms later
+          if (enemy.dualShotgun) {
+            this.time.delayedCall(120, () => {
+              if (target.hp > 0 && !gameOver) {
+                const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+                target.hp = Math.max(0, target.hp - dmg);
+                this.drawHpBar(target);
+                this.showShotEffect(enemy, target, w.enemyColor);
+                this.showDmgNumber(target.x, target.y, dmg, w.enemyColor);
+                if (target.hp <= 0) this.killRobot(target);
+              }
+            });
+          }
+          return;
+        }
+        this.moveToward(enemy, target.x, target.y, 80);
+        return;
+      }
+
+      // Normal robots: pick best available weapon in range
       let bestW = -1;
       WEAPONS.forEach((w, i) => {
-        if (enemy.cooldowns[i] <= now && dist <= w.range &&
-            !this.lineBlockedByWall(enemy.x, enemy.y, target.x, target.y)) {
+        if (enemy.cooldowns[i] <= now && dist <= w.range && hasLOS)
           if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
-        }
       });
 
       if (bestW >= 0) {
