@@ -191,22 +191,35 @@ class GameScene extends Phaser.Scene {
   update() {
     const now = Date.now();
 
-    // ── Cooldown bar under each robot ────────────────────────────────────
+    // ── Cooldown bars ─────────────────────────────────────────────────────
     this.robots.forEach(r => {
       r.cdBar.clear();
-      if (r.hp <= 0 || armedWeapon === null || r !== selectedRobot) return;
-      const cdLeft = Math.max(0, r.cooldowns[armedWeapon] - now);
-      const total  = WEAPONS[armedWeapon].cd;
-      if (cdLeft <= 0) return;
-      const pct = cdLeft / total;
-      const bw = 36, bh = 4;
-      const bx = r.x - bw / 2, by = r.y + 30;
-      r.cdBar.fillStyle(0x222233, 1);
-      r.cdBar.fillRect(bx, by, bw, bh);
-      r.cdBar.fillStyle(WEAPONS[armedWeapon].color, 1);
-      r.cdBar.fillRect(bx, by, bw * pct, bh);
-      r.cdBar.lineStyle(1, 0x555566, 1);
-      r.cdBar.strokeRect(bx, by, bw, bh);
+      if (r.hp <= 0) return;
+
+      if (r.isPlayer) {
+        // Player: show armed weapon cooldown
+        if (armedWeapon === null || r !== selectedRobot) return;
+        const cdLeft = Math.max(0, r.cooldowns[armedWeapon] - now);
+        if (cdLeft <= 0) return;
+        const pct = cdLeft / WEAPONS[armedWeapon].cd;
+        const bw = 36, bh = 4, bx = r.x - 18, by = r.y + 30;
+        r.cdBar.fillStyle(0x222233, 1); r.cdBar.fillRect(bx, by, bw, bh);
+        r.cdBar.fillStyle(WEAPONS[armedWeapon].color, 1); r.cdBar.fillRect(bx, by, bw * pct, bh);
+        r.cdBar.lineStyle(1, 0x555566, 1); r.cdBar.strokeRect(bx, by, bw, bh);
+      } else {
+        // Enemy: show soonest weapon cooldown
+        let minCd = Infinity, minTotal = 1;
+        WEAPONS.forEach((w, i) => {
+          const cd = Math.max(0, r.cooldowns[i] - now);
+          if (cd < minCd) { minCd = cd; minTotal = w.cd; }
+        });
+        if (minCd <= 0) return;
+        const pct = minCd / minTotal;
+        const bw = 36, bh = 4, bx = r.x - 18, by = r.y + 30;
+        r.cdBar.fillStyle(0x330000, 1); r.cdBar.fillRect(bx, by, bw, bh);
+        r.cdBar.fillStyle(0xff3300, 1); r.cdBar.fillRect(bx, by, bw * pct, bh);
+        r.cdBar.lineStyle(1, 0x664444, 1); r.cdBar.strokeRect(bx, by, bw, bh);
+      }
     });
 
     // ── Range circle always follows selected robot ────────────────────────
