@@ -131,7 +131,8 @@ class GameScene extends Phaser.Scene {
     });
 
     robots = [
-      makeRobot(100, 300, true,  0),
+      makeRobot(100, 200, true,  0),
+      makeRobot(100, 430, true,  1),
       makeRobot(700, 140, false, 0),
       makeRobot(700, 520, false, 1),
     ];
@@ -170,7 +171,9 @@ class GameScene extends Phaser.Scene {
     });
 
     // Enemy AI timer
-    this.time.addEvent({ delay: 2200, callback: this.enemyTurn, callbackScope: this, loop: true });
+    this.time.addEvent({ delay: 2200, callback: this.enemyTurn,     callbackScope: this, loop: true });
+    // Companion AI timer (P2)
+    this.time.addEvent({ delay: 1600, callback: this.companionTurn, callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
     document.getElementById('w3').onclick = () => this.hideWeaponMenu();
@@ -586,6 +589,61 @@ class GameScene extends Phaser.Scene {
         });
       }
     });
+  }
+
+  // Companion AI — P2 acts on its own
+  companionTurn() {
+    if (gameOver) return;
+    const companion = this.robots.find(r => r.isPlayer && r.id === 1 && r.hp > 0 && !r.respawning);
+    if (!companion) return;
+    const enemies = this.robots.filter(r => !r.isPlayer && r.hp > 0);
+    if (!enemies.length) return;
+
+    const now = Date.now();
+    // Find closest enemy
+    const target = enemies.reduce((a, b) =>
+      Phaser.Math.Distance.Between(companion.x, companion.y, a.x, a.y) <
+      Phaser.Math.Distance.Between(companion.x, companion.y, b.x, b.y) ? a : b
+    );
+    const dist = Phaser.Math.Distance.Between(companion.x, companion.y, target.x, target.y);
+
+    // Try to shoot: pick best weapon in range with clear line of sight
+    let bestW = -1;
+    WEAPONS.forEach((w, i) => {
+      if (companion.cooldowns[i] <= now && dist <= w.range &&
+          !this.lineBlockedByWall(companion.x, companion.y, target.x, target.y)) {
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+      }
+    });
+
+    if (bestW >= 0) {
+      this.attackRobot(companion, target, bestW);
+      return;
+    }
+
+    // Can't shoot — move closer
+    const angle = Math.atan2(target.y - companion.y, target.x - companion.x);
+    const moveD = 100;
+    const c = this.clampToMap(
+      companion.x + Math.cos(angle) * moveD,
+      companion.y + Math.sin(angle) * moveD
+    );
+    if (!this.isWall(c.x, c.y) && !this.lineBlockedByWall(companion.x, companion.y, c.x, c.y)) {
+      this.tweens.add({
+        targets: companion.sprite, x: c.x, y: c.y,
+        duration: 400, ease: 'Power1',
+        onUpdate: () => {
+          companion.x = companion.sprite.x; companion.y = companion.sprite.y;
+          companion.label.setPosition(companion.x, companion.y + 24);
+          this.drawHpBar(companion);
+        },
+        onComplete: () => {
+          companion.x = c.x; companion.y = c.y;
+          companion.label.setPosition(companion.x, companion.y + 24);
+          this.drawHpBar(companion);
+        }
+      });
+    }
   }
 
   updateStatus(msg) {
