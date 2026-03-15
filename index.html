@@ -132,7 +132,7 @@ class GameScene extends Phaser.Scene {
 
     robots = [
       makeRobot(100, 200, true,  0),
-      makeRobot(100, 430, true,  1),
+      makeRobot(80,  530, true,  1),
       makeRobot(700, 140, false, 0),
       makeRobot(700, 520, false, 1),
     ];
@@ -565,29 +565,7 @@ class GameScene extends Phaser.Scene {
       }
 
       // Move toward player
-      const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
-      const moveD = 80;
-      let nx = enemy.x + Math.cos(angle) * moveD;
-      let ny = enemy.y + Math.sin(angle) * moveD;
-      const c = this.clampToMap(nx, ny);
-      if (!this.isWall(c.x, c.y) && !this.lineBlockedByWall(enemy.x, enemy.y, c.x, c.y)) {
-        this.tweens.add({
-          targets: enemy.sprite,
-          x: c.x, y: c.y,
-          duration: 400, ease: 'Power1',
-          onUpdate: () => {
-            enemy.x = enemy.sprite.x;
-            enemy.y = enemy.sprite.y;
-            enemy.label.setPosition(enemy.x, enemy.y + 24);
-            this.drawHpBar(enemy);
-          },
-          onComplete: () => {
-            enemy.x = c.x; enemy.y = c.y;
-            enemy.label.setPosition(enemy.x, enemy.y + 24);
-            this.drawHpBar(enemy);
-          }
-        });
-      }
+      this.moveToward(enemy, target.x, target.y, 80);
     });
   }
 
@@ -622,27 +600,35 @@ class GameScene extends Phaser.Scene {
     }
 
     // Can't shoot — move closer
-    const angle = Math.atan2(target.y - companion.y, target.x - companion.x);
-    const moveD = 100;
-    const c = this.clampToMap(
-      companion.x + Math.cos(angle) * moveD,
-      companion.y + Math.sin(angle) * moveD
-    );
-    if (!this.isWall(c.x, c.y) && !this.lineBlockedByWall(companion.x, companion.y, c.x, c.y)) {
-      this.tweens.add({
-        targets: companion.sprite, x: c.x, y: c.y,
-        duration: 400, ease: 'Power1',
-        onUpdate: () => {
-          companion.x = companion.sprite.x; companion.y = companion.sprite.y;
-          companion.label.setPosition(companion.x, companion.y + 24);
-          this.drawHpBar(companion);
-        },
-        onComplete: () => {
-          companion.x = c.x; companion.y = c.y;
-          companion.label.setPosition(companion.x, companion.y + 24);
-          this.drawHpBar(companion);
-        }
-      });
+    this.moveToward(companion, target.x, target.y, 100);
+  }
+
+  // Move robot toward (tx,ty), trying alternative angles if direct path is walled
+  moveToward(robot, tx, ty, moveD) {
+    const base = Math.atan2(ty - robot.y, tx - robot.x);
+    for (const da of [0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35]) {
+      const a = base + da;
+      const c = this.clampToMap(
+        robot.x + Math.cos(a) * moveD,
+        robot.y + Math.sin(a) * moveD
+      );
+      if (!this.isWall(c.x, c.y)) {
+        this.tweens.add({
+          targets: robot.sprite, x: c.x, y: c.y,
+          duration: 400, ease: 'Power1',
+          onUpdate: () => {
+            robot.x = robot.sprite.x; robot.y = robot.sprite.y;
+            robot.label.setPosition(robot.x, robot.y + 24);
+            this.drawHpBar(robot);
+          },
+          onComplete: () => {
+            robot.x = c.x; robot.y = c.y;
+            robot.label.setPosition(robot.x, robot.y + 24);
+            this.drawHpBar(robot);
+          }
+        });
+        return;
+      }
     }
   }
 
