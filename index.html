@@ -192,13 +192,21 @@ class GameScene extends Phaser.Scene {
     s1.label.setStyle({ color: '#ffaa00', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(s1);
 
-    // Dual-shotgun robot
+    // Dual-shotgun robot 1
     const ds1 = makeRobot(200, 490, false, 4);
     ds1.shotgunOnly = true;
     ds1.dualShotgun = true;
     ds1.label.setText('DS1');
     ds1.label.setStyle({ color: '#ff6600', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(ds1);
+
+    // Dual-shotgun robot 2
+    const ds2 = makeRobot(350, 75, false, 5);
+    ds2.shotgunOnly = true;
+    ds2.dualShotgun = true;
+    ds2.label.setText('DS2');
+    ds2.label.setStyle({ color: '#ff6600', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(ds2);
 
     this.robots = robots;
     this.updateAllHpBars();
