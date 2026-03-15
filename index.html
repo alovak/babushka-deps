@@ -11,25 +11,27 @@
     #status-bar { background: rgba(0,0,0,0.7); padding: 6px 10px; border: 1px solid #00ff88; border-radius: 4px; margin-bottom: 6px; }
     #weapon-menu {
       display: none; position: absolute;
-      background: rgba(10, 10, 30, 0.95);
-      border: 2px solid #00ff88; border-radius: 6px;
-      padding: 8px; z-index: 100;
+      background: rgba(10, 10, 30, 0.97);
+      border: 2px solid #00ff88; border-radius: 8px;
+      padding: 10px; z-index: 100;
+      touch-action: none;
     }
     .weapon-btn {
-      display: block; width: 180px; padding: 8px 12px; margin: 4px 0;
+      display: block; width: 230px; padding: 14px 16px; margin: 6px 0;
       background: rgba(0, 255, 136, 0.1); border: 1px solid #00ff88;
-      color: #00ff88; font-family: monospace; font-size: 13px;
-      cursor: pointer; border-radius: 4px; text-align: left; transition: background 0.15s;
+      color: #00ff88; font-family: monospace; font-size: 16px;
+      cursor: pointer; border-radius: 6px; text-align: left; transition: background 0.1s;
+      -webkit-tap-highlight-color: transparent;
     }
-    .weapon-btn:hover { background: rgba(0, 255, 136, 0.3); }
+    .weapon-btn:active, .weapon-btn.touch-active { background: rgba(0, 255, 136, 0.4); }
     .weapon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-    .weapon-btn .cooldown { float: right; color: #ff6644; font-size: 11px; }
+    .weapon-btn .cooldown { float: right; color: #ff6644; font-size: 12px; }
   </style>
 </head>
 <body>
 <div id="game-container">
   <div id="ui-overlay">
-    <div id="status-bar">Кликни на своего робота</div>
+    <div id="status-bar">Тапни на своего робота (синего)</div>
   </div>
   <div id="weapon-menu">
     <div style="color:#aaffcc; margin-bottom:6px; font-size:12px;">ВЫБЕРИ ОРУЖИЕ</div>
@@ -54,8 +56,7 @@ const WEAPONS = [
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
 let selectedRobot = null;
-let selectedWeapon = null;
-let waitingForTarget = false;
+let armedWeapon = null;   // weapon index chosen from menu, or null = auto
 let robots = [];
 let gameOver = false;
 
@@ -136,21 +137,103 @@ class GameScene extends Phaser.Scene {
     this.robots = robots;
     this.updateAllHpBars();
 
-    // Click handler
-    this.input.on('pointerdown', (ptr) => this.handleClick(ptr.x, ptr.y));
+    // ── INPUT: hold detection ──────────────────────────────────────────────
+    this.holdTimer = null;
+    this.didHold = false;
+
+    this.input.on('pointerdown', (ptr) => {
+      if (gameOver) return;
+      this.didHold = false;
+      const robot = this.robotAt(ptr.x, ptr.y);
+      // Start hold timer only on own robot
+      if (robot && robot.isPlayer) {
+        // Select immediately on press
+        selectedRobot = robot;
+        this.drawSelectionRing(robot);
+        this.updateStatus(`${robot.label.text} выбран — удержи для выбора оружия`);
+        this.holdTimer = this.time.delayedCall(450, () => {
+          this.didHold = true;
+          this.showWeaponMenu(ptr.x, ptr.y, robot);
+        });
+      }
+    });
+
+    this.input.on('pointerup', (ptr) => {
+      if (gameOver) return;
+      if (this.holdTimer) { this.holdTimer.remove(); this.holdTimer = null; }
+      if (this.didHold) return; // menu was shown, handled by buttons
+
+      const tapped = this.robotAt(ptr.x, ptr.y);
+
+      if (tapped && tapped.isPlayer) {
+        // Tap own robot: just select (already done on pointerdown)
+        return;
+      }
+
+      if (!selectedRobot) return;
+
+      if (tapped && !tapped.isPlayer) {
+        // Tap enemy → attack
+        this.doAttack(selectedRobot, tapped);
+      } else if (!tapped) {
+        // Tap empty map → move
+        this.moveRobot(selectedRobot, ptr.x, ptr.y);
+      }
+    });
 
     // Enemy AI timer
     this.time.addEvent({ delay: 2200, callback: this.enemyTurn, callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
-    document.getElementById('w3').onclick = () => this.cancelSelection();
+    document.getElementById('w3').onclick = () => this.hideWeaponMenu();
     [0, 1, 2].forEach(i => {
-      document.getElementById('w' + i).onclick = () => this.selectWeapon(i);
+      const btn = document.getElementById('w' + i);
+      btn.ontouchstart = btn.onclick = (e) => {
+        e.stopPropagation();
+        if (!btn.disabled) this.selectWeapon(i);
+      };
     });
 
     // Move indicator
     this.moveIndicator = this.add.graphics();
     this.shotLine = this.add.graphics();
+  }
+
+  robotAt(x, y) {
+    return this.robots.find(r => r.hp > 0 && Phaser.Math.Distance.Between(x, y, r.x, r.y) < 28);
+  }
+
+  // Attack with chosen weapon (armedWeapon) or best available
+  doAttack(attacker, target) {
+    const now = Date.now();
+    const dist = Phaser.Math.Distance.Between(attacker.x, attacker.y, target.x, target.y);
+
+    let wIdx = armedWeapon;
+    if (wIdx !== null) {
+      // Specific weapon chosen
+      if (attacker.cooldowns[wIdx] > now) {
+        const cd = ((attacker.cooldowns[wIdx] - now) / 1000).toFixed(1);
+        this.updateStatus(`${WEAPONS[wIdx].name} ещё заряжается: ${cd}s`);
+        return;
+      }
+    } else {
+      // Auto: pick best available in range
+      wIdx = -1;
+      WEAPONS.forEach((w, i) => {
+        if (attacker.cooldowns[i] <= now && dist <= w.range)
+          if (wIdx < 0 || w.dmg > WEAPONS[wIdx].dmg) wIdx = i;
+      });
+      if (wIdx < 0) {
+        // Any available weapon regardless of range?
+        const anyReady = WEAPONS.findIndex((w, i) => attacker.cooldowns[i] <= now);
+        if (anyReady < 0) { this.updateStatus('Все оружия на перезарядке!'); return; }
+        this.updateStatus('Враг слишком далеко! Подойди ближе.');
+        return;
+      }
+    }
+    this.attackRobot(attacker, target, wIdx);
+    armedWeapon = null;
+    this.moveIndicator.clear();
   }
 
   drawWalls() {
@@ -212,56 +295,25 @@ class GameScene extends Phaser.Scene {
     }));
   }
 
-  handleClick(x, y) {
-    if (gameOver) return;
-
-    // Click on a robot?
-    const clicked = this.robots.find(r => r.hp > 0 && Phaser.Math.Distance.Between(x, y, r.x, r.y) < 22);
-
-    if (waitingForTarget) {
-      if (clicked && !clicked.isPlayer) {
-        this.attackRobot(selectedRobot, clicked, selectedWeapon);
-      } else if (!clicked) {
-        this.moveRobot(selectedRobot, x, y);
-      }
-      this.cancelSelection();
-      return;
-    }
-
-    if (clicked && clicked.isPlayer) {
-      selectedRobot = clicked;
-      selectedWeapon = null;
-      waitingForTarget = false;
-      this.drawSelectionRing(clicked);
-      this.showWeaponMenu(x, y, clicked);
-      this.updateStatus(`${clicked.label.text} выбран — выбери оружие или двигайся`);
-      return;
-    }
-
-    // Click empty space without selection
-    if (selectedRobot && !document.getElementById('weapon-menu').style.display.includes('block')) {
-      this.moveRobot(selectedRobot, x, y);
-      this.cancelSelection();
-    }
-  }
-
   showWeaponMenu(px, py, robot) {
     const menu = document.getElementById('weapon-menu');
     const now = Date.now();
     WEAPONS.forEach((w, i) => {
       const btn = document.getElementById('w' + i);
       const cdLeft = Math.max(0, robot.cooldowns[i] - now);
-      btn.innerHTML = `${w.name} <small style="color:#aaa">${w.desc}</small>` +
+      btn.innerHTML = `${w.name}<br><small style="color:#aaa;font-size:12px">${w.desc} · радиус ${w.range}</small>` +
         (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
       btn.disabled = cdLeft > 0;
     });
-    // Position near click, keep inside window
-    let mx = px + 10, my = py + 10;
-    if (mx + 200 > W) mx = px - 200;
-    if (my + 180 > H) my = py - 180;
+    // Position near robot, keep inside canvas
+    let mx = px + 14, my = py - 80;
+    if (mx + 250 > W) mx = px - 254;
+    if (my < 0) my = 8;
+    if (my + 220 > H) my = H - 225;
     menu.style.left = mx + 'px';
     menu.style.top  = my + 'px';
     menu.style.display = 'block';
+    this.updateStatus('Удержи — выбери оружие, тапни врага — атаковать');
   }
 
   hideWeaponMenu() {
@@ -270,24 +322,13 @@ class GameScene extends Phaser.Scene {
 
   selectWeapon(idx) {
     this.hideWeaponMenu();
-    selectedWeapon = idx;
-    waitingForTarget = true;
+    armedWeapon = idx;
     const w = WEAPONS[idx];
-    this.updateStatus(`${w.name} выбран — кликни на врага для атаки или на карту для движения (радиус: ${w.range})`);
     // Show range ring
     this.moveIndicator.clear();
-    this.moveIndicator.lineStyle(1, w.color, 0.3);
+    this.moveIndicator.lineStyle(2, w.color, 0.35);
     this.moveIndicator.strokeCircle(selectedRobot.x, selectedRobot.y, w.range);
-  }
-
-  cancelSelection() {
-    this.hideWeaponMenu();
-    selectedRobot = null;
-    selectedWeapon = null;
-    waitingForTarget = false;
-    this.drawSelectionRing(null);
-    this.moveIndicator.clear();
-    this.updateStatus('Кликни на своего робота');
+    this.updateStatus(`${w.name} готово — тапни на врага для атаки`);
   }
 
   moveRobot(robot, tx, ty) {
@@ -319,7 +360,7 @@ class GameScene extends Phaser.Scene {
       onComplete: () => {
         robot.x = clamped.x;
         robot.y = clamped.y;
-        this.updateStatus('Кликни на своего робота');
+        this.updateStatus('Тапни на врага или удержи для выбора оружия');
       }
     });
     // Move indicator
