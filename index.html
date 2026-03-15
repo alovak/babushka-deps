@@ -31,7 +31,7 @@
 <body>
 <div id="game-container">
   <div id="ui-overlay">
-    <div id="status-bar">Тапни на своего робота (синего)</div>
+    <div id="status-bar">Тапни на карту — двигаться. Тапни на врага — стрелять. Удержи — выбор оружия.</div>
     <div id="lives-bar">❤️ ❤️ ❤️ ❤️ ❤️</div>
   </div>
   <div id="weapon-menu">
@@ -134,53 +134,37 @@ class GameScene extends Phaser.Scene {
       makeRobot(100, 300, true,  0),
       makeRobot(700, 140, false, 0),
       makeRobot(700, 520, false, 1),
-      makeRobot(480, 180, false, 2),
-      makeRobot(480, 420, false, 3),
     ];
 
     this.robots = robots;
     this.updateAllHpBars();
 
-    // ── INPUT: hold detection ──────────────────────────────────────────────
+    // Auto-select the single player robot — no explicit selection needed
+    selectedRobot = robots.find(r => r.isPlayer);
+    this.drawSelectionRing(selectedRobot);
+
+    // ── INPUT: hold = weapon menu, tap = move/attack ───────────────────────
     this.holdTimer = null;
     this.didHold = false;
 
     this.input.on('pointerdown', (ptr) => {
       if (gameOver) return;
       this.didHold = false;
-      const robot = this.robotAt(ptr.x, ptr.y);
-      // Start hold timer only on own robot
-      if (robot && robot.isPlayer) {
-        // Select immediately on press
-        selectedRobot = robot;
-        this.drawSelectionRing(robot);
-        this.updateStatus(`${robot.label.text} выбран — удержи для выбора оружия`);
-        this.holdTimer = this.time.delayedCall(450, () => {
-          this.didHold = true;
-          this.showWeaponMenu(ptr.x, ptr.y, robot);
-        });
-      }
+      this.holdTimer = this.time.delayedCall(450, () => {
+        this.didHold = true;
+        this.showWeaponMenu(ptr.x, ptr.y, selectedRobot);
+      });
     });
 
     this.input.on('pointerup', (ptr) => {
       if (gameOver) return;
       if (this.holdTimer) { this.holdTimer.remove(); this.holdTimer = null; }
-      if (this.didHold) return; // menu was shown, handled by buttons
+      if (this.didHold) return;
 
       const tapped = this.robotAt(ptr.x, ptr.y);
-
-      if (tapped && tapped.isPlayer) {
-        // Tap own robot: just select (already done on pointerdown)
-        return;
-      }
-
-      if (!selectedRobot) return;
-
       if (tapped && !tapped.isPlayer) {
-        // Tap enemy → attack
         this.doAttack(selectedRobot, tapped);
-      } else if (!tapped) {
-        // Tap empty map → move
+      } else if (!tapped || tapped.isPlayer) {
         this.moveRobot(selectedRobot, ptr.x, ptr.y);
       }
     });
@@ -506,6 +490,8 @@ class GameScene extends Phaser.Scene {
     robot.sprite.setPosition(robot.spawnX, robot.spawnY);
     robot.label.setPosition(robot.spawnX, robot.spawnY + 24);
     robot.sprite.clearTint().setAlpha(1);
+    selectedRobot = robot;
+    this.drawSelectionRing(robot);
     this.drawHpBar(robot);
     // Flash white to signal respawn
     this.tweens.add({
