@@ -123,6 +123,7 @@ class GameScene extends Phaser.Scene {
       sprite: this.add.image(x, y, isPlayer ? 'player-robot' : 'enemy-robot').setOrigin(0.5),
       selectionRing: this.add.graphics(),
       hpBar: this.add.graphics(),
+      cdBar: this.add.graphics(),
       label: this.add.text(x, y + 24, isPlayer ? `P${id+1}` : `E${id+1}`,
         { fontSize: '10px', color: isPlayer ? '#88aaff' : '#ff8888', fontFamily: 'monospace' }).setOrigin(0.5),
     });
@@ -194,9 +195,40 @@ class GameScene extends Phaser.Scene {
       };
     });
 
-    // Move indicator
+    // Move indicator, shot line, range circle
     this.moveIndicator = this.add.graphics();
-    this.shotLine = this.add.graphics();
+    this.shotLine     = this.add.graphics();
+    this.rangeCircle  = this.add.graphics();
+  }
+
+  update() {
+    const now = Date.now();
+
+    // ── Cooldown bar under each robot ────────────────────────────────────
+    this.robots.forEach(r => {
+      r.cdBar.clear();
+      if (r.hp <= 0 || armedWeapon === null || r !== selectedRobot) return;
+      const cdLeft = Math.max(0, r.cooldowns[armedWeapon] - now);
+      const total  = WEAPONS[armedWeapon].cd;
+      if (cdLeft <= 0) return;
+      const pct = cdLeft / total;
+      const bw = 36, bh = 4;
+      const bx = r.x - bw / 2, by = r.y + 30;
+      r.cdBar.fillStyle(0x222233, 1);
+      r.cdBar.fillRect(bx, by, bw, bh);
+      r.cdBar.fillStyle(WEAPONS[armedWeapon].color, 1);
+      r.cdBar.fillRect(bx, by, bw * pct, bh);
+      r.cdBar.lineStyle(1, 0x555566, 1);
+      r.cdBar.strokeRect(bx, by, bw, bh);
+    });
+
+    // ── Range circle always follows selected robot ────────────────────────
+    this.rangeCircle.clear();
+    if (selectedRobot && selectedRobot.hp > 0 && armedWeapon !== null) {
+      const w = WEAPONS[armedWeapon];
+      this.rangeCircle.lineStyle(1.5, w.color, 0.35);
+      this.rangeCircle.strokeCircle(selectedRobot.x, selectedRobot.y, w.range);
+    }
   }
 
   robotAt(x, y) {
@@ -326,12 +358,7 @@ class GameScene extends Phaser.Scene {
   selectWeapon(idx) {
     this.hideWeaponMenu();
     armedWeapon = idx;
-    const w = WEAPONS[idx];
-    // Show range ring
-    this.moveIndicator.clear();
-    this.moveIndicator.lineStyle(2, w.color, 0.35);
-    this.moveIndicator.strokeCircle(selectedRobot.x, selectedRobot.y, w.range);
-    this.updateStatus(`${w.name} готово — тапни на врага для атаки`);
+    this.updateStatus(`${WEAPONS[idx].name} готово — тапни на врага для атаки`);
   }
 
   moveRobot(robot, tx, ty) {
@@ -361,6 +388,7 @@ class GameScene extends Phaser.Scene {
         robot.label.setPosition(robot.x, robot.y + 24);
         this.drawHpBar(robot);
         if (robot === selectedRobot) this.drawSelectionRing(robot);
+        robot.cdBar.clear(); // redrawn by update() next frame
       },
       onComplete: () => {
         robot.x = clamped.x;
