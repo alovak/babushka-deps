@@ -32,6 +32,7 @@
 <div id="game-container">
   <div id="ui-overlay">
     <div id="status-bar">Тапни на своего робота (синего)</div>
+    <div id="lives-bar">❤️ ❤️ ❤️ ❤️ ❤️</div>
   </div>
   <div id="weapon-menu">
     <div style="color:#aaffcc; margin-bottom:6px; font-size:12px;">ВЫБЕРИ ОРУЖИЕ</div>
@@ -56,9 +57,10 @@ const WEAPONS = [
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
 let selectedRobot = null;
-let armedWeapon = null;   // weapon index chosen from menu, or null = auto
+let armedWeapon = null;
 let robots = [];
 let gameOver = false;
+let lives = 5;
 
 // ── OBSTACLE LAYOUT ─────────────────────────────────────────────────────────
 const WALLS = [
@@ -117,8 +119,8 @@ class GameScene extends Phaser.Scene {
 
     // Robots
     const makeRobot = (x, y, isPlayer, id) => ({
-      id, isPlayer, x, y,
-      hp: 100, maxHp: 100,
+      id, isPlayer, x, y, spawnX: x, spawnY: y,
+      hp: 100, maxHp: 100, respawning: false,
       cooldowns: [0, 0, 0],
       sprite: this.add.image(x, y, isPlayer ? 'player-robot' : 'enemy-robot').setOrigin(0.5),
       selectionRing: this.add.graphics(),
@@ -129,10 +131,11 @@ class GameScene extends Phaser.Scene {
     });
 
     robots = [
-      makeRobot(100, 200, true,  0),
-      makeRobot(100, 420, true,  1),
+      makeRobot(100, 300, true,  0),
       makeRobot(700, 140, false, 0),
       makeRobot(700, 520, false, 1),
+      makeRobot(480, 180, false, 2),
+      makeRobot(480, 420, false, 3),
     ];
 
     this.robots = robots;
@@ -232,7 +235,7 @@ class GameScene extends Phaser.Scene {
   }
 
   robotAt(x, y) {
-    return this.robots.find(r => r.hp > 0 && Phaser.Math.Distance.Between(x, y, r.x, r.y) < 28);
+    return this.robots.find(r => r.hp > 0 && !r.respawning && Phaser.Math.Distance.Between(x, y, r.x, r.y) < 28);
   }
 
   // Attack with chosen weapon (armedWeapon) or best available
@@ -465,31 +468,57 @@ class GameScene extends Phaser.Scene {
     const ex = this.add.graphics();
     [0xff4400, 0xffaa00, 0xffff00].forEach((c, i) => {
       this.time.delayedCall(i * 80, () => {
-        ex.clear();
-        ex.fillStyle(c, 1);
+        ex.clear(); ex.fillStyle(c, 1);
         ex.fillCircle(robot.x, robot.y, 24 + i * 6);
       });
     });
     this.time.delayedCall(300, () => {
       ex.destroy();
-      robot.sprite.setAlpha(0.25).setTint(0x444444);
+      robot.sprite.setAlpha(0.2).setTint(0x444444);
       robot.hpBar.clear();
+      robot.cdBar.clear();
     });
 
-    // Check win/lose
-    this.time.delayedCall(500, () => this.checkEndgame());
+    if (robot.isPlayer) {
+      lives--;
+      this.updateLivesBar();
+      if (robot === selectedRobot) { selectedRobot = null; this.drawSelectionRing(null); }
+      if (lives <= 0) {
+        this.time.delayedCall(500, () => { gameOver = true; this.showEndScreen('☠ ПОРАЖЕНИЕ', '#ff2200'); });
+      } else {
+        robot.respawning = true;
+        this.time.delayedCall(1800, () => this.respawnRobot(robot));
+      }
+    } else {
+      this.time.delayedCall(500, () => {
+        const enemiesAlive = this.robots.filter(r => !r.isPlayer && r.hp > 0).length;
+        if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
+      });
+    }
   }
 
-  checkEndgame() {
-    const playersAlive = this.robots.filter(r => r.isPlayer && r.hp > 0).length;
-    const enemiesAlive = this.robots.filter(r => !r.isPlayer && r.hp > 0).length;
-    if (playersAlive === 0) {
-      gameOver = true;
-      this.showEndScreen('☠ ПОРАЖЕНИЕ', '#ff2200');
-    } else if (enemiesAlive === 0) {
-      gameOver = true;
-      this.showEndScreen('🏆 ПОБЕДА!', '#00ff88');
-    }
+  respawnRobot(robot) {
+    robot.hp = robot.maxHp;
+    robot.respawning = false;
+    robot.cooldowns = [0, 0, 0];
+    robot.x = robot.spawnX;
+    robot.y = robot.spawnY;
+    robot.sprite.setPosition(robot.spawnX, robot.spawnY);
+    robot.label.setPosition(robot.spawnX, robot.spawnY + 24);
+    robot.sprite.clearTint().setAlpha(1);
+    this.drawHpBar(robot);
+    // Flash white to signal respawn
+    this.tweens.add({
+      targets: robot.sprite, alpha: 0.2,
+      duration: 150, yoyo: true, repeat: 4,
+      onComplete: () => robot.sprite.setAlpha(1)
+    });
+    this.updateStatus(`P1 возродился! Жизней осталось: ${lives}`);
+  }
+
+  updateLivesBar() {
+    document.getElementById('lives-bar').textContent =
+      '❤️ '.repeat(lives) + '🖤 '.repeat(5 - lives);
   }
 
   showEndScreen(msg, color) {
@@ -507,7 +536,7 @@ class GameScene extends Phaser.Scene {
   enemyTurn() {
     if (gameOver) return;
     const enemies = this.robots.filter(r => !r.isPlayer && r.hp > 0);
-    const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
+    const players = this.robots.filter(r => r.isPlayer && r.hp > 0 && !r.respawning);
     if (!enemies.length || !players.length) return;
 
     enemies.forEach(enemy => {
@@ -518,7 +547,22 @@ class GameScene extends Phaser.Scene {
       );
       const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
 
-      // [TEMP] Enemy only moves, does not shoot — for practice
+      // Pick best available weapon in range with clear line of sight
+      const now = Date.now();
+      let bestW = -1;
+      WEAPONS.forEach((w, i) => {
+        if (enemy.cooldowns[i] <= now && dist <= w.range &&
+            !this.lineBlockedByWall(enemy.x, enemy.y, target.x, target.y)) {
+          if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+        }
+      });
+
+      if (bestW >= 0) {
+        this.attackRobot(enemy, target, bestW);
+        return;
+      }
+
+      // Move toward player
       const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
       const moveD = 80;
       let nx = enemy.x + Math.cos(angle) * moveD;
