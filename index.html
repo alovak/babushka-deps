@@ -130,8 +130,8 @@ class GameScene extends Phaser.Scene {
     robots = [
       makeRobot(100, 200, true,  0),
       makeRobot(100, 420, true,  1),
-      makeRobot(680, 160, false, 0),
-      makeRobot(680, 440, false, 1),
+      makeRobot(700, 140, false, 0),
+      makeRobot(700, 520, false, 1),
     ];
 
     this.robots = robots;
@@ -352,23 +352,23 @@ class GameScene extends Phaser.Scene {
       clamped.x = robot.x + (clamped.x - robot.x) * MAX_MOVE / dist;
       clamped.y = robot.y + (clamped.y - robot.y) * MAX_MOVE / dist;
     }
-    // Move animation
+    // Move animation — only tween sprite and label, redraw graphics in onUpdate
     this.tweens.add({
-      targets: [robot.sprite, robot.hpBar, robot.selectionRing, robot.label],
-      x: clamped.x, y: (target) => {
-        if (target === robot.hpBar) return clamped.y;
-        if (target === robot.label) return clamped.y + 24;
-        return clamped.y;
-      },
+      targets: robot.sprite,
+      x: clamped.x, y: clamped.y,
       duration: 300, ease: 'Power2',
       onUpdate: () => {
         robot.x = robot.sprite.x;
         robot.y = robot.sprite.y;
+        robot.label.setPosition(robot.x, robot.y + 24);
         this.drawHpBar(robot);
+        if (robot === selectedRobot) this.drawSelectionRing(robot);
       },
       onComplete: () => {
         robot.x = clamped.x;
         robot.y = clamped.y;
+        robot.label.setPosition(robot.x, robot.y + 24);
+        this.drawHpBar(robot);
         this.updateStatus('Тапни на врага или удержи для выбора оружия');
       }
     });
@@ -500,16 +500,20 @@ class GameScene extends Phaser.Scene {
       const c = this.clampToMap(nx, ny);
       if (!this.isWall(c.x, c.y) && !this.lineBlockedByWall(enemy.x, enemy.y, c.x, c.y)) {
         this.tweens.add({
-          targets: [enemy.sprite, enemy.hpBar, enemy.selectionRing, enemy.label],
-          x: c.x,
-          y: (t) => t === enemy.label ? c.y + 24 : c.y,
+          targets: enemy.sprite,
+          x: c.x, y: c.y,
           duration: 400, ease: 'Power1',
           onUpdate: () => {
             enemy.x = enemy.sprite.x;
             enemy.y = enemy.sprite.y;
+            enemy.label.setPosition(enemy.x, enemy.y + 24);
             this.drawHpBar(enemy);
           },
-          onComplete: () => { enemy.x = c.x; enemy.y = c.y; }
+          onComplete: () => {
+            enemy.x = c.x; enemy.y = c.y;
+            enemy.label.setPosition(enemy.x, enemy.y + 24);
+            this.drawHpBar(enemy);
+          }
         });
       }
     });
