@@ -49,9 +49,9 @@ const W = 800, H = 600;
 const TILE = 40;
 
 const WEAPONS = [
-  { name: '⚡ Лазер',   dmg: 15, cd: 1000,  range: 300, color: 0x00ffff,  desc: 'Быстро / слабый' },
-  { name: '🚀 Ракета',  dmg: 45, cd: 3500,  range: 260, color: 0xff6600,  desc: 'Медленно / сильный' },
-  { name: '💥 Дробовик',dmg: 30, cd: 2000,  range: 150, color: 0xffff00,  desc: 'Средне / близко' },
+  { name: '⚡ Лазер',    dmg: 15, cd: 1000, range: 300, color: 0x00ffff, enemyColor: 0xff2222, desc: 'Быстро / слабый' },
+  { name: '🚀 Ракета',   dmg: 45, cd: 3500, range: 260, color: 0xff8800, enemyColor: 0xcc00ff, desc: 'Медленно / сильный' },
+  { name: '💥 Дробовик', dmg: 30, cd: 2000, range: 150, color: 0xffff00, enemyColor: 0xff4400, desc: 'Средне / близко' },
 ];
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
@@ -261,6 +261,11 @@ class GameScene extends Phaser.Scene {
     );
   }
 
+  lineBlockedByWall(x1, y1, x2, y2) {
+    const line = new Phaser.Geom.Line(x1, y1, x2, y2);
+    return this.wallRects.some(r => Phaser.Geom.Intersects.LineToRectangle(line, r));
+  }
+
   clampToMap(x, y) {
     return { x: Phaser.Math.Clamp(x, 25, W - 25), y: Phaser.Math.Clamp(y, 25, H - 25) };
   }
@@ -337,6 +342,10 @@ class GameScene extends Phaser.Scene {
       this.updateStatus('Там стена! Выбери другое место.');
       return;
     }
+    if (this.lineBlockedByWall(robot.x, robot.y, clamped.x, clamped.y)) {
+      this.updateStatus('Путь заблокирован стеной! Обойди её.');
+      return;
+    }
     const dist = Phaser.Math.Distance.Between(robot.x, robot.y, clamped.x, clamped.y);
     const MAX_MOVE = 200;
     if (dist > MAX_MOVE) {
@@ -377,6 +386,10 @@ class GameScene extends Phaser.Scene {
       this.updateStatus(`Слишком далеко! Максимальный радиус ${w.name}: ${w.range}`);
       return;
     }
+    if (this.lineBlockedByWall(attacker.x, attacker.y, target.x, target.y)) {
+      this.updateStatus('Стена блокирует выстрел! Найди позицию с прямой видимостью.');
+      return;
+    }
     // Set cooldown
     attacker.cooldowns[wIdx] = Date.now() + w.cd;
     // Apply damage with small random variance
@@ -384,9 +397,10 @@ class GameScene extends Phaser.Scene {
     target.hp = Math.max(0, target.hp - dmg);
     this.drawHpBar(target);
 
-    // Shot effect
-    this.showShotEffect(attacker, target, w);
-    this.showDmgNumber(target.x, target.y, dmg, w.color);
+    // Shot effect — use different color for enemy shots
+    const shotColor = attacker.isPlayer ? w.color : w.enemyColor;
+    this.showShotEffect(attacker, target, shotColor);
+    this.showDmgNumber(target.x, target.y, dmg, shotColor);
     this.updateStatus(`${attacker.label.text} стреляет ${w.name} → ${target.label.text}: -${dmg} HP`);
 
     if (target.hp <= 0) {
@@ -394,18 +408,16 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  showShotEffect(from, to, weapon) {
+  showShotEffect(from, to, color) {
     const g = this.shotLine;
     g.clear();
-    g.lineStyle(3, weapon.color, 1);
+    g.lineStyle(3, color, 1);
     g.lineBetween(from.x, from.y, to.x, to.y);
-    // Muzzle flash
     const flash = this.add.graphics();
-    flash.fillStyle(weapon.color, 1);
+    flash.fillStyle(color, 1);
     flash.fillCircle(from.x, from.y, 8);
-    // Impact
     const impact = this.add.graphics();
-    impact.fillStyle(weapon.color, 0.8);
+    impact.fillStyle(color, 0.8);
     impact.fillCircle(to.x, to.y, 12);
     this.time.delayedCall(120, () => { g.clear(); flash.destroy(); impact.destroy(); });
   }
@@ -472,7 +484,6 @@ class GameScene extends Phaser.Scene {
     const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
     if (!enemies.length || !players.length) return;
 
-    const now = Date.now();
     enemies.forEach(enemy => {
       // Find closest player
       const target = players.reduce((closest, p) =>
@@ -481,39 +492,25 @@ class GameScene extends Phaser.Scene {
       );
       const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
 
-      // Pick best available weapon in range
-      let bestW = -1;
-      WEAPONS.forEach((w, i) => {
-        if (enemy.cooldowns[i] <= now && dist <= w.range) {
-          if (bestW < 0 || WEAPONS[i].dmg > WEAPONS[bestW].dmg) bestW = i;
-        }
-      });
-
-      if (bestW >= 0) {
-        // Attack
-        this.attackRobot(enemy, target, bestW);
-        this.drawSelectionRing({ ...enemy, selectionRing: enemy.selectionRing });
-      } else {
-        // Move toward player
-        const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
-        const moveD = 80;
-        let nx = enemy.x + Math.cos(angle) * moveD;
-        let ny = enemy.y + Math.sin(angle) * moveD;
-        const c = this.clampToMap(nx, ny);
-        if (!this.isWall(c.x, c.y)) {
-          this.tweens.add({
-            targets: [enemy.sprite, enemy.hpBar, enemy.selectionRing, enemy.label],
-            x: c.x,
-            y: (t) => t === enemy.label ? c.y + 24 : c.y,
-            duration: 400, ease: 'Power1',
-            onUpdate: () => {
-              enemy.x = enemy.sprite.x;
-              enemy.y = enemy.sprite.y;
-              this.drawHpBar(enemy);
-            },
-            onComplete: () => { enemy.x = c.x; enemy.y = c.y; }
-          });
-        }
+      // [TEMP] Enemy only moves, does not shoot — for practice
+      const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
+      const moveD = 80;
+      let nx = enemy.x + Math.cos(angle) * moveD;
+      let ny = enemy.y + Math.sin(angle) * moveD;
+      const c = this.clampToMap(nx, ny);
+      if (!this.isWall(c.x, c.y) && !this.lineBlockedByWall(enemy.x, enemy.y, c.x, c.y)) {
+        this.tweens.add({
+          targets: [enemy.sprite, enemy.hpBar, enemy.selectionRing, enemy.label],
+          x: c.x,
+          y: (t) => t === enemy.label ? c.y + 24 : c.y,
+          duration: 400, ease: 'Power1',
+          onUpdate: () => {
+            enemy.x = enemy.sprite.x;
+            enemy.y = enemy.sprite.y;
+            this.drawHpBar(enemy);
+          },
+          onComplete: () => { enemy.x = c.x; enemy.y = c.y; }
+        });
       }
     });
   }
