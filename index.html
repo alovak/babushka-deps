@@ -151,6 +151,25 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0x77aacc, 1);
     g.fillEllipse(26, 20, 12, 10); // cockpit canopy
     g.generateTexture('helicopter', 40, 40);
+
+    // Drone: top-down quadcopter, cyan-blue ally
+    g.clear();
+    g.fillStyle(0x223344, 1);
+    g.fillRect(2, 14, 12, 4);    // left arm
+    g.fillRect(22, 14, 12, 4);   // right arm
+    g.fillRect(14, 2, 4, 12);    // top arm
+    g.fillRect(14, 22, 4, 12);   // bottom arm
+    g.fillStyle(0x44aadd, 0.85);
+    g.fillCircle(6,  16, 5);     // left rotor
+    g.fillCircle(30, 16, 5);     // right rotor
+    g.fillCircle(16, 6,  5);     // top rotor
+    g.fillCircle(16, 30, 5);     // bottom rotor
+    g.fillStyle(0x2255aa, 1);
+    g.fillCircle(16, 16, 7);     // center body
+    g.fillStyle(0x00ffee, 1);
+    g.fillRect(19, 14, 7, 4);    // laser pod →
+    g.generateTexture('drone', 36, 36);
+
     g.destroy();
   }
 
@@ -270,6 +289,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1300, callback: this.heliTurn,      callbackScope: this, loop: true });
     // Shotgun bot AI timer (neutral faction — attacks everyone)
     this.time.addEvent({ delay: 1800, callback: this.shotgunBotTurn, callbackScope: this, loop: true });
+    // Drone AI timer (ally of P2 — attack enemies with laser)
+    this.time.addEvent({ delay: 1200, callback: this.droneTurn, callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
     document.getElementById('w4').onclick = () => this.hideWeaponMenu();
@@ -312,6 +333,28 @@ class GameScene extends Phaser.Scene {
       robots.push(heli);
     });
 
+    // ── Drones (orbit P2, ally, laser only) ───────────────────────────────
+    const p2 = robots[1];
+    [0, Math.PI].forEach((startAngle, i) => {
+      const dx = p2.x + Math.cos(startAngle) * 60;
+      const dy = p2.y + Math.sin(startAngle) * 60;
+      const drone = {
+        id: i, isPlayer: false, isTank: false, isPlane: false, isHelicopter: false,
+        isDrone: true,
+        x: dx, y: dy, spawnX: dx, spawnY: dy,
+        hp: 35, maxHp: 35, respawning: false,
+        cooldowns: [0, 0, 0, 0],
+        orbitAngle: startAngle, orbitR: 60, orbitSpeed: 1.8,
+        sprite: this.add.image(dx, dy, 'drone').setOrigin(0.5).setScale(0.8),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(dx, dy + 22, `D${i + 1}`,
+          { fontSize: '10px', color: '#44ddff', fontFamily: 'monospace' }).setOrigin(0.5),
+      };
+      robots.push(drone);
+    });
+
     // ── Planes (added to robots array so they can be shot) ────────────────
     [
       { x: -30,  y: 160, angle: 0.15,             speed: 130, dropIn: 2.5 },
@@ -338,6 +381,21 @@ class GameScene extends Phaser.Scene {
   update(time, delta) {
     const now = Date.now();
     const dt = delta / 1000; // seconds
+
+    // ── Drones orbit P2 ────────────────────────────────────────────────────
+    if (!gameOver) {
+      const p2 = this.robots[1];
+      this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning).forEach(d => {
+        d.orbitAngle += d.orbitSpeed * dt;
+        // Orbit current P2 position (drones follow P2)
+        d.x = p2.x + Math.cos(d.orbitAngle) * d.orbitR;
+        d.y = p2.y + Math.sin(d.orbitAngle) * d.orbitR;
+        d.sprite.setPosition(d.x, d.y);
+        d.sprite.setRotation(d.orbitAngle + Math.PI / 2);
+        d.label.setPosition(d.x, d.y + 22);
+        this.drawHpBar(d);
+      });
+    }
 
     // ── Helicopters orbit movement ─────────────────────────────────────────
     if (!gameOver) {
@@ -609,8 +667,8 @@ class GameScene extends Phaser.Scene {
     target.hp = Math.max(0, target.hp - dmg);
     this.drawHpBar(target);
 
-    // Shot color: player=weapon color, tank=lime, shotgun bot=purple, enemy=enemy color
-    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : w.enemyColor));
+    // Shot color: player=weapon color, drone=cyan, tank=lime, shotgun bot=purple, enemy=enemy color
+    const shotColor = attacker.isPlayer ? w.color : (attacker.isDrone ? 0x00ffee : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : w.enemyColor)));
     if (wIdx === 3) {
       this.showGrenadeEffect(attacker, target);
     } else {
@@ -720,6 +778,27 @@ class GameScene extends Phaser.Scene {
         robot.respawning = true;
         this.time.delayedCall(1800, () => this.respawnRobot(robot));
       }
+    } else if (robot.isDrone) {
+      // Drone crash: spin, fade, then respawn
+      this.tweens.add({
+        targets: robot.sprite, angle: 360, alpha: 0,
+        duration: 500, ease: 'Power2',
+        onComplete: () => {
+          robot.sprite.setVisible(false);
+          robot.hpBar.clear();
+          robot.label.setVisible(false);
+          robot.respawning = true;
+          this.time.delayedCall(6000, () => {
+            robot.hp = robot.maxHp;
+            robot.respawning = false;
+            robot.cooldowns = [0, 0, 0, 0];
+            robot.sprite.setVisible(true).setAlpha(1).setAngle(0);
+            robot.label.setVisible(true);
+            this.drawHpBar(robot);
+            this.updateStatus(`Дрон D${robot.id + 1} вернулся!`);
+          });
+        }
+      });
     } else if (robot.isPlane || robot.isHelicopter) {
       // Crash: spin and fade
       this.tweens.add({
@@ -873,6 +952,31 @@ class GameScene extends Phaser.Scene {
         return;
       }
     }
+  }
+
+  // Drone AI — orbits P2, shoots laser at enemies (same target list as companion)
+  droneTurn() {
+    if (gameOver) return;
+    const drones = this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning);
+    const targets = this.robots.filter(r => !r.isPlayer && !r.isPlane && !r.isHelicopter &&
+                                           !r.isDrone && r.hp > 0 && !r.respawning);
+    if (!drones.length || !targets.length) return;
+
+    const now = Date.now();
+    const laser = WEAPONS[0]; // drones have one laser each
+
+    drones.forEach(drone => {
+      // Find closest enemy
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(drone.x, drone.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(drone.x, drone.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(drone.x, drone.y, target.x, target.y);
+      if (drone.cooldowns[0] <= now && dist <= laser.range &&
+          !this.lineBlockedByWall(drone.x, drone.y, target.x, target.y)) {
+        this.attackRobot(drone, target, 0);
+      }
+    });
   }
 
   // Helicopter AI — orbits and shoots laser at all robots
