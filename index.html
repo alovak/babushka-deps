@@ -178,6 +178,28 @@ class GameScene extends Phaser.Scene {
     g.fillEllipse(26, 20, 12, 10); // cockpit canopy
     g.generateTexture('helicopter', 40, 40);
 
+    // Yellow robot
+    g.clear();
+    g.fillStyle(0x998800, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xffee44, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xccaa00, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('yellow-robot', 36, 36);
+
+    // Green robot
+    g.clear();
+    g.fillStyle(0x116622, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0x88ff88, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0x33cc55, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('green-robot', 36, 36);
+
     // Deploy-drone sprite: cyan quadcopter
     g.clear();
     g.fillStyle(0x112233, 1);
@@ -247,6 +269,24 @@ class GameScene extends Phaser.Scene {
       makeRobot(340,  450, false, 5),        // Extra red 3
       makeRobot(650,  110, false, 6),        // Extra red 4
     ];
+
+    // Yellow robot — minigun only, independent (attacks everyone non-yellow)
+    const yr = makeRobot(560, 460, false, 11);
+    yr.isYellow = true;
+    yr.sprite.setTexture('yellow-robot');
+    yr.label.setText('Y1');
+    yr.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(yr);
+
+    // Green team — laser only, fight red enemies
+    [[430, 80], [750, 310], [320, 330], [860, 460]].forEach(([x, y], i) => {
+      const gr = makeRobot(x, y, false, 7 + i);
+      gr.isGreen = true;
+      gr.sprite.setTexture('green-robot');
+      gr.label.setText(`G${i + 1}`);
+      gr.label.setStyle({ color: '#88ff88', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(gr);
+    });
 
     // Shotgun bot (single) — purple faction, attacks everyone
     const s1 = makeRobot(820, 100, false, 3);
@@ -322,6 +362,10 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1300, callback: this.heliTurn,      callbackScope: this, loop: true });
     // Shotgun bot AI timer (neutral faction — attacks everyone)
     this.time.addEvent({ delay: 1800, callback: this.shotgunBotTurn, callbackScope: this, loop: true });
+    // Green team AI timer (laser only — attacks red enemies)
+    this.time.addEvent({ delay: 1500, callback: this.greenTurn, callbackScope: this, loop: true });
+    // Yellow robot AI timer (minigun only — attacks everyone)
+    this.time.addEvent({ delay: 200,  callback: this.yellowTurn, callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
     document.getElementById('w6').onclick = () => this.hideWeaponMenu();
@@ -877,7 +921,7 @@ class GameScene extends Phaser.Scene {
       });
     } else {
       this.time.delayedCall(500, () => {
-        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isDeployDrone && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0).length;
+        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isDeployDrone && !r.isGreen && !r.isYellow && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
     }
@@ -928,8 +972,8 @@ class GameScene extends Phaser.Scene {
     if (gameOver) return;
     // Exclude shotgun bots and deploy drone — they have separate AI
     const enemies = this.robots.filter(r => !r.isPlayer && !r.isDeployDrone && !r.isTank && !r.isPlane && !r.isHelicopter && !r.isShotgunBot && r.hp > 0);
-    // Red robots fight blue players, deploy drone, AND shotgun bots
-    const players = this.robots.filter(r => (r.isPlayer || r.isShotgunBot || r.isDeployDrone) && r.hp > 0 && !r.respawning);
+    // Red robots fight blue players, green team, deploy drone, AND shotgun bots
+    const players = this.robots.filter(r => (r.isPlayer || r.isShotgunBot || r.isDeployDrone || r.isGreen) && r.hp > 0 && !r.respawning);
     if (!enemies.length || !players.length) return;
 
     enemies.forEach(enemy => {
@@ -958,6 +1002,56 @@ class GameScene extends Phaser.Scene {
 
       // Move toward player
       this.moveToward(enemy, target.x, target.y, 80);
+    });
+  }
+
+  // Yellow robot AI — minigun only, attacks everyone non-yellow
+  yellowTurn() {
+    if (gameOver) return;
+    const yellow = this.robots.find(r => r.isYellow && r.hp > 0 && !r.respawning);
+    if (!yellow) return;
+    const targets = this.robots.filter(r =>
+      !r.isYellow && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+    );
+    if (!targets.length) return;
+    const now = Date.now();
+    const target = targets.reduce((a, b) =>
+      Phaser.Math.Distance.Between(yellow.x, yellow.y, a.x, a.y) <
+      Phaser.Math.Distance.Between(yellow.x, yellow.y, b.x, b.y) ? a : b
+    );
+    const dist = Phaser.Math.Distance.Between(yellow.x, yellow.y, target.x, target.y);
+    const mg = WEAPONS[4];
+    if ((yellow.cooldowns[4] || 0) <= now && dist <= mg.range &&
+        !this.lineBlockedByWall(yellow.x, yellow.y, target.x, target.y)) {
+      this.attackRobot(yellow, target, 4);
+      return;
+    }
+    this.moveToward(yellow, target.x, target.y, 90);
+  }
+
+  // Green team AI — laser only, attack red enemies
+  greenTurn() {
+    if (gameOver) return;
+    const greens = this.robots.filter(r => r.isGreen && r.hp > 0 && !r.respawning);
+    const targets = this.robots.filter(r =>
+      !r.isPlayer && !r.isGreen && !r.isDeployDrone &&
+      !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+    );
+    if (!greens.length || !targets.length) return;
+    const now = Date.now();
+    greens.forEach(green => {
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(green.x, green.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(green.x, green.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(green.x, green.y, target.x, target.y);
+      const laser = WEAPONS[0];
+      if ((green.cooldowns[0] || 0) <= now && dist <= laser.range &&
+          !this.lineBlockedByWall(green.x, green.y, target.x, target.y)) {
+        this.attackRobot(green, target, 0);
+        return;
+      }
+      this.moveToward(green, target.x, target.y, 85);
     });
   }
 
