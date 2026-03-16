@@ -397,13 +397,19 @@ class GameScene extends Phaser.Scene {
     // Map 3 tank
     robots.push(makeRobot(580,  -820, false, 4, true));
 
-    // ── Combat vehicles: dual laser, attack everyone, don't respawn ────────
+    // ── Combat vehicles: dual laser ───────────────────────────────────────
+    // Enemy vehicles (V1-V10): attack everyone except fellow enemy vehicles
     [
-      { x: 140,  y: 270,   map: 1 },   // map 1 — left
-      { x: 870,  y: 600,   map: 1 },   // map 1 — right
-      { x: 400,  y: -680,  map: 3 },   // map 3 — upper
-      { x: 700,  y: -380,  map: 3 },   // map 3 — lower
-      { x: 1700, y: 300,   map: 2 },   // map 2
+      { x: 140,  y: 270  },   // map 1
+      { x: 870,  y: 600  },   // map 1
+      { x: 400,  y: -680 },   // map 3
+      { x: 700,  y: -380 },   // map 3
+      { x: 1700, y: 300  },   // map 2
+      { x: 600,  y: 760  },   // map 1
+      { x: 2000, y: 350  },   // map 2
+      { x: 2400, y: 640  },   // map 2
+      { x: 300,  y: -730 },   // map 3
+      { x: 1000, y: -500 },   // map 3
     ].forEach(({ x, y }, i) => {
       const cv = {
         id: 40 + i, isPlayer: false, isTank: false, isCombatVehicle: true,
@@ -419,6 +425,30 @@ class GameScene extends Phaser.Scene {
       };
       robots.push(cv);
       this.drawHpBar(cv);
+    });
+
+    // Ally vehicles (AV1-AV5): blue-allied, attack everyone except players + allies
+    [
+      { x: 200,  y: 580  },   // map 1
+      { x: 700,  y: 760  },   // map 1
+      { x: 1600, y: 640  },   // map 2
+      { x: 250,  y: -300 },   // map 3
+      { x: 850,  y: -760 },   // map 3
+    ].forEach(({ x, y }, i) => {
+      const av = {
+        id: 50 + i, isPlayer: false, isTank: false, isCombatVehicle: true, isAllyVehicle: true,
+        x, y, spawnX: x, spawnY: y,
+        hp: 70, maxHp: 70, respawning: false,
+        cooldowns: [0, 0, 0, 0, 0, 0, 0],
+        sprite: this.add.image(x, y, 'combat-vehicle').setOrigin(0.5).setTint(0x3366dd),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(x, y + 30, `AV${i + 1}`,
+          { fontSize: '10px', color: '#4499ff', fontFamily: 'monospace' }).setOrigin(0.5),
+      };
+      robots.push(av);
+      this.drawHpBar(av);
     });
 
     // ── Map 2 enemies ─────────────────────────────────────────────────────
@@ -839,7 +869,7 @@ class GameScene extends Phaser.Scene {
     g.clear();
     const bw = 36, bh = 5;
     const bx = robot.x - bw / 2, by = robot.y - 28;
-    g.fillStyle(0x330000, 1); g.fillRect(bx, by, bw, bh);
+    g.fillStyle(robot.isAllyVehicle ? 0x001133 : 0x330000, 1); g.fillRect(bx, by, bw, bh);
     const pct = Math.max(0, robot.hp / robot.maxHp);
     const col = pct > 0.5 ? 0x00dd44 : pct > 0.25 ? 0xffaa00 : 0xff2200;
     g.fillStyle(col, 1); g.fillRect(bx, by, bw * pct, bh);
@@ -995,7 +1025,7 @@ class GameScene extends Phaser.Scene {
     this.drawHpBar(target);
 
     // Shot color: player=weapon color, drone=cyan, tank=lime, shotgun bot=purple, enemy=enemy color
-    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : (attacker.isOrange ? 0xff8800 : (attacker.isYellow || attacker.isYellowDrone ? 0xffee44 : (attacker.isCombatVehicle ? 0xaaff44 : w.enemyColor)))));
+    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : (attacker.isOrange ? 0xff8800 : (attacker.isYellow || attacker.isYellowDrone ? 0xffee44 : (attacker.isCombatVehicle ? (attacker.isAllyVehicle ? 0x4488ff : 0xaaff44) : w.enemyColor)))));
     if (wIdx === 3) {
       this.showGrenadeEffect(attacker, target);
     } else {
@@ -1144,7 +1174,7 @@ class GameScene extends Phaser.Scene {
         // Victory when no red, green, or purple (shotgun bots) remain
         const enemiesAlive = this.robots.filter(r =>
           r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isOrange &&
-          !r.isTank && !r.isPlane && !r.isHelicopter
+          !r.isTank && !r.isPlane && !r.isHelicopter && !r.isAllyVehicle
         ).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
@@ -1257,37 +1287,44 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  // Combat vehicle AI — dual laser, attacks everyone non-vehicle
+  // Combat vehicle AI — dual laser
+  // Enemy vehicles attack everyone except fellow enemy vehicles
+  // Ally vehicles attack everyone except players and fellow ally vehicles
   vehicleTurn() {
     if (gameOver) return;
     const vehicles = this.robots.filter(r => r.isCombatVehicle && r.hp > 0 && !r.respawning);
     if (!vehicles.length) return;
     const now = Date.now();
     vehicles.forEach(vehicle => {
-      const targets = this.robots.filter(r =>
-        !r.isCombatVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
-      );
+      const targets = vehicle.isAllyVehicle
+        ? this.robots.filter(r =>
+            !r.isPlayer && !r.isDeployDrone &&
+            !(r.isCombatVehicle && r.isAllyVehicle) &&
+            !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+          )
+        : this.robots.filter(r =>
+            !(r.isCombatVehicle && !r.isAllyVehicle) &&
+            !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+          );
       if (!targets.length) return;
       const target = targets.reduce((a, b) =>
         Phaser.Math.Distance.Between(vehicle.x, vehicle.y, a.x, a.y) <
         Phaser.Math.Distance.Between(vehicle.x, vehicle.y, b.x, b.y) ? a : b
       );
       const dist = Phaser.Math.Distance.Between(vehicle.x, vehicle.y, target.x, target.y);
-      // Face target
       vehicle.sprite.setRotation(Math.atan2(target.y - vehicle.y, target.x - vehicle.x));
       const laser = WEAPONS[0];
+      const laserColor = vehicle.isAllyVehicle ? 0x4488ff : 0xaaff44;
       if ((vehicle.cooldowns[0] || 0) <= now && dist <= laser.range &&
           !this.lineBlockedByWall(vehicle.x, vehicle.y, target.x, target.y)) {
-        // First laser via normal path (sets cooldown)
         this.attackRobot(vehicle, target, 0);
-        // Second laser — 120ms later, direct hit bypassing cooldown
         this.time.delayedCall(120, () => {
           if (gameOver || target.hp <= 0) return;
           const dmg2 = Math.round(laser.dmg * (0.85 + Math.random() * 0.3));
           target.hp = Math.max(0, target.hp - dmg2);
           this.drawHpBar(target);
-          this.showShotEffect(vehicle, target, 0xaaff44);
-          this.showDmgNumber(target.x, target.y, dmg2, 0xaaff44);
+          this.showShotEffect(vehicle, target, laserColor);
+          this.showDmgNumber(target.x, target.y, dmg2, laserColor);
           this.updateStatus(`${vehicle.label.text} — второй лазер → ${target.label.text}: -${dmg2} HP`);
           if (target.hp <= 0) this.killRobot(target);
         });
