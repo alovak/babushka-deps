@@ -966,15 +966,11 @@ class GameScene extends Phaser.Scene {
     if (gameOver) return;
     const drones = this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning);
     const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
-    const targets = this.robots.filter(r => {
-      if (r.isPlayer || r.isTank || r.isShotgunBot ||
-          r.isPlane || r.isHelicopter || r.isDrone) return false;
-      if (r.hp <= 0 || r.respawning) return false;
-      // Skip red enemy if standing too close to P1 or P2
-      return players.every(p =>
-        Phaser.Math.Distance.Between(r.x, r.y, p.x, p.y) >= 90
-      );
-    });
+    const targets = this.robots.filter(r =>
+      !r.isPlayer && !r.isTank && !r.isShotgunBot &&
+      !r.isPlane && !r.isHelicopter && !r.isDrone &&
+      r.hp > 0 && !r.respawning
+    );
     if (!drones.length || !targets.length) return;
 
     const now = Date.now();
@@ -985,8 +981,12 @@ class GameScene extends Phaser.Scene {
         Phaser.Math.Distance.Between(drone.x, drone.y, b.x, b.y) ? a : b
       );
       const dist = Phaser.Math.Distance.Between(drone.x, drone.y, target.x, target.y);
-      // Drop bomb right on the red enemy when drone is above them
       if (drone.cooldowns[0] <= now && dist <= 80) {
+        // Do not drop bomb if any player is within 90px of the target
+        const tooClose = players.some(p =>
+          Phaser.Math.Distance.Between(target.x, target.y, p.x, p.y) < 90
+        );
+        if (tooClose) return;
         drone.cooldowns[0] = now + 5000;
         this.dropBomb(target.x, target.y);
       }
