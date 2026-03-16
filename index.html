@@ -51,6 +51,7 @@
 <script>
 // ── CONFIG ─────────────────────────────────────────────────────────────────
 const W = 1200, H = 850;
+const MAP3_H = 900;                      // map 3 zone above map 1 (negative y)
 const WORLD_W = 2600, WORLD_H = H;
 const TILE = 40;
 
@@ -102,6 +103,34 @@ const WALLS = [
   { x: 1060, y: 520, w: 40, h: 240 },
   // Bottom mid barrier
   { x: 360, y: 730, w: 180, h: 40  },
+
+  // ── Map 3 separator: horizontal wall with two corridor gaps (above map 1) ─
+  // Corridors are vertical passages at x=230-370 and x=830-970
+  { x: 0,   y: -22, w: 230,  h: 44 },   // left block
+  { x: 370, y: -22, w: 460,  h: 44 },   // center block
+  { x: 970, y: -22, w: 230,  h: 44 },   // right block
+
+  // ── Map 3 obstacles ──────────────────────────────────────────────────────
+  // Upper-left cluster
+  { x: 100,  y: -820, w: 40,  h: 200 },
+  { x: 100,  y: -820, w: 200, h: 40  },
+  // Upper-center tower
+  { x: 440,  y: -760, w: 200, h: 40  },
+  { x: 580,  y: -760, w: 40,  h: 200 },
+  // Upper-right
+  { x: 780,  y: -820, w: 200, h: 40  },
+  { x: 780,  y: -820, w: 40,  h: 200 },
+  { x: 1060, y: -760, w: 40,  h: 180 },
+  // Mid-left
+  { x: 200,  y: -540, w: 200, h: 40  },
+  { x: 200,  y: -540, w: 40,  h: 200 },
+  // Mid-center passage
+  { x: 480,  y: -480, w: 40,  h: 200 },
+  { x: 440,  y: -480, w: 120, h: 40  },
+  // Mid-right
+  { x: 720,  y: -540, w: 200, h: 40  },
+  { x: 880,  y: -540, w: 40,  h: 200 },
+  { x: 1000, y: -420, w: 160, h: 40  },
 
   // ── Map separator: vertical wall with two corridor gaps ─────────────────
   // Corridor 1: y=210-340, Corridor 2: y=510-640
@@ -273,13 +302,13 @@ class GameScene extends Phaser.Scene {
     // Background grid
     const bg = this.add.graphics();
     bg.fillStyle(0x0d0d1a, 1);
-    bg.fillRect(0, 0, WORLD_W, WORLD_H);
+    bg.fillRect(0, -MAP3_H, WORLD_W, WORLD_H + MAP3_H);
     bg.lineStyle(1, 0x1a1a3a, 0.6);
-    for (let x = 0; x <= WORLD_W; x += TILE) bg.lineBetween(x, 0, x, WORLD_H);
-    for (let y = 0; y <= WORLD_H; y += TILE) bg.lineBetween(0, y, WORLD_W, y);
-    // Visual divider between map 1 and map 2 (decorative line)
+    for (let x = 0; x <= WORLD_W; x += TILE) bg.lineBetween(x, -MAP3_H, x, WORLD_H);
+    for (let y = -MAP3_H; y <= WORLD_H; y += TILE) bg.lineBetween(0, y, WORLD_W, y);
+    // Visual dividers
     bg.lineStyle(2, 0x334455, 0.4);
-    bg.lineBetween(1440, 0, 1440, WORLD_H);
+    bg.lineBetween(1440, -MAP3_H, 1440, WORLD_H);  // map 1 / map 2 border
 
     // Walls
     this.wallGraphics = this.add.graphics();
@@ -320,6 +349,15 @@ class GameScene extends Phaser.Scene {
       makeRobot(340,  450, false, 5),        // Extra red 3
       makeRobot(650,  110, false, 6),        // Extra red 4
     ];
+
+    // ── Map 3 enemies (above map 1, negative y) ───────────────────────────
+    robots.push(makeRobot(200,  -700, false, 21));
+    robots.push(makeRobot(700,  -600, false, 22));
+    robots.push(makeRobot(1050, -650, false, 23));
+    robots.push(makeRobot(350,  -380, false, 24));
+    robots.push(makeRobot(850,  -380, false, 25));
+    // Map 3 tank
+    robots.push(makeRobot(580,  -820, false, 4, true));
 
     // ── Map 2 enemies ─────────────────────────────────────────────────────
     robots.push(makeRobot(1600, 200, false, 15));
@@ -502,7 +540,7 @@ class GameScene extends Phaser.Scene {
     });
 
     // ── Camera: follows selected robot, bounded to world ──────────────────
-    this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+    this.cameras.main.setBounds(0, -MAP3_H, WORLD_W, WORLD_H + MAP3_H);
     this.cameras.main.startFollow(selectedRobot.sprite, true, 0.1, 0.1);
   }
 
@@ -699,7 +737,7 @@ class GameScene extends Phaser.Scene {
   }
 
   clampToMap(x, y) {
-    return { x: Phaser.Math.Clamp(x, 25, WORLD_W - 25), y: Phaser.Math.Clamp(y, 25, WORLD_H - 25) };
+    return { x: Phaser.Math.Clamp(x, 25, WORLD_W - 25), y: Phaser.Math.Clamp(y, -MAP3_H + 25, WORLD_H - 25) };
   }
 
   updateAllHpBars() {
