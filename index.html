@@ -954,12 +954,16 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // Drone AI — orbits P2, shoots laser at enemies (same target list as companion)
+  // Drone AI — orbits P2, shoots laser at red enemies only (not blue players, tanks, bots)
   droneTurn() {
     if (gameOver) return;
     const drones = this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning);
-    const targets = this.robots.filter(r => !r.isPlayer && !r.isPlane && !r.isHelicopter &&
-                                           !r.isDrone && r.hp > 0 && !r.respawning);
+    // Only red enemies: exclude players (blue), tanks, shotgun bots, planes, helis, other drones
+    const targets = this.robots.filter(r =>
+      !r.isPlayer && !r.isTank && !r.isShotgunBot &&
+      !r.isPlane && !r.isHelicopter && !r.isDrone &&
+      r.hp > 0 && !r.respawning
+    );
     if (!drones.length || !targets.length) return;
 
     const now = Date.now();
