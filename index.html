@@ -50,6 +50,7 @@
 <script>
 // ── CONFIG ─────────────────────────────────────────────────────────────────
 const W = 1200, H = 850;
+const WORLD_W = 2600, WORLD_H = H;
 const TILE = 40;
 
 const WEAPONS = [
@@ -100,6 +101,40 @@ const WALLS = [
   { x: 1060, y: 520, w: 40, h: 240 },
   // Bottom mid barrier
   { x: 360, y: 730, w: 180, h: 40  },
+
+  // ── Map separator: vertical wall with two corridor gaps ─────────────────
+  // Corridor 1: y=210-340, Corridor 2: y=510-640
+  { x: 1160, y: 0,   w: 280, h: 210 },  // top block
+  { x: 1160, y: 340, w: 280, h: 170 },  // middle block
+  { x: 1160, y: 640, w: 280, h: 210 },  // bottom block
+
+  // ── Map 2 obstacles ──────────────────────────────────────────────────────
+  // Upper-left cluster
+  { x: 1520, y: 100, w: 40,  h: 180 },
+  { x: 1520, y: 100, w: 180, h: 40  },
+  // Upper-center T
+  { x: 1780, y: 180, w: 200, h: 40  },
+  { x: 1780, y: 180, w: 40,  h: 180 },
+  // Upper-right fortress
+  { x: 2080, y: 100, w: 200, h: 40  },
+  { x: 2080, y: 100, w: 40,  h: 160 },
+  { x: 2380, y: 140, w: 40,  h: 200 },
+  // Center island
+  { x: 1680, y: 360, w: 180, h: 40  },
+  { x: 1820, y: 360, w: 40,  h: 200 },
+  // Right-center passage
+  { x: 2100, y: 340, w: 180, h: 40  },
+  { x: 2240, y: 340, w: 40,  h: 200 },
+  // Lower-left L
+  { x: 1520, y: 540, w: 160, h: 40  },
+  { x: 1520, y: 540, w: 40,  h: 200 },
+  // Lower-center
+  { x: 1780, y: 620, w: 200, h: 40  },
+  { x: 1920, y: 500, w: 40,  h: 180 },
+  // Lower-right block
+  { x: 2200, y: 580, w: 40,  h: 220 },
+  { x: 2200, y: 740, w: 200, h: 40  },
+  { x: 2460, y: 500, w: 40,  h: 200 },
 ];
 
 // ── PHASER SCENE ─────────────────────────────────────────────────────────────
@@ -237,10 +272,13 @@ class GameScene extends Phaser.Scene {
     // Background grid
     const bg = this.add.graphics();
     bg.fillStyle(0x0d0d1a, 1);
-    bg.fillRect(0, 0, W, H);
+    bg.fillRect(0, 0, WORLD_W, WORLD_H);
     bg.lineStyle(1, 0x1a1a3a, 0.6);
-    for (let x = 0; x <= W; x += TILE) bg.lineBetween(x, 0, x, H);
-    for (let y = 0; y <= H; y += TILE) bg.lineBetween(0, y, W, y);
+    for (let x = 0; x <= WORLD_W; x += TILE) bg.lineBetween(x, 0, x, WORLD_H);
+    for (let y = 0; y <= WORLD_H; y += TILE) bg.lineBetween(0, y, WORLD_W, y);
+    // Visual divider between map 1 and map 2 (decorative line)
+    bg.lineStyle(2, 0x334455, 0.4);
+    bg.lineBetween(1440, 0, 1440, WORLD_H);
 
     // Walls
     this.wallGraphics = this.add.graphics();
@@ -282,6 +320,15 @@ class GameScene extends Phaser.Scene {
       makeRobot(650,  110, false, 6),        // Extra red 4
     ];
 
+    // ── Map 2 enemies ─────────────────────────────────────────────────────
+    robots.push(makeRobot(1600, 200, false, 15));
+    robots.push(makeRobot(2000, 180, false, 16));
+    robots.push(makeRobot(1700, 700, false, 17));
+    robots.push(makeRobot(2350, 420, false, 18));
+    robots.push(makeRobot(2500, 720, false, 19));
+    // Map 2 tank
+    robots.push(makeRobot(2150, 450, false, 3, true));
+
     // Orange robot — honey grenade (dual rocket), attacks everyone non-orange
     const or1 = makeRobot(400, 720, false, 14);
     or1.isOrange = true;
@@ -290,15 +337,6 @@ class GameScene extends Phaser.Scene {
     or1.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(or1);
 
-    // Yellow robots — minigun only, independent (attacks everyone non-yellow)
-    [[560, 460, 'Y1'], [200, 180, 'Y2']].forEach(([x, y, lbl], i) => {
-      const yr = makeRobot(x, y, false, 11 + i);
-      yr.isYellow = true;
-      yr.sprite.setTexture('yellow-robot');
-      yr.label.setText(lbl);
-      yr.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
-      robots.push(yr);
-    });
 
     // Green team — laser only, fight red enemies
     [[430, 80], [750, 310], [320, 330], [860, 460]].forEach(([x, y], i) => {
@@ -364,11 +402,11 @@ class GameScene extends Phaser.Scene {
       if (this.holdTimer) { this.holdTimer.remove(); this.holdTimer = null; }
       if (this.didHold) return;
 
-      const tapped = this.robotAt(ptr.x, ptr.y);
+      const tapped = this.robotAt(ptr.worldX, ptr.worldY);
       if (tapped && !tapped.isPlayer) {
         this.doAttack(selectedRobot, tapped);
       } else if (!tapped || tapped.isPlayer) {
-        this.moveRobot(selectedRobot, ptr.x, ptr.y);
+        this.moveRobot(selectedRobot, ptr.worldX, ptr.worldY);
       }
     });
 
@@ -388,8 +426,7 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1500, callback: this.greenTurn, callbackScope: this, loop: true });
     // Orange robot AI timer (honey grenade — attacks everyone)
     this.time.addEvent({ delay: 2200, callback: this.orangeTurn, callbackScope: this, loop: true });
-    // Yellow robot AI timer (minigun only — attacks everyone)
-    this.time.addEvent({ delay: 200,  callback: this.yellowTurn, callbackScope: this, loop: true });
+
 
     // Setup weapon menu buttons
     document.getElementById('w6').onclick = () => this.hideWeaponMenu();
@@ -454,6 +491,10 @@ class GameScene extends Phaser.Scene {
       plane.sprite.setRotation(pd.angle);
       robots.push(plane);
     });
+
+    // ── Camera: follows selected robot, bounded to world ──────────────────
+    this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+    this.cameras.main.startFollow(selectedRobot.sprite, true, 0.1, 0.1);
   }
 
   update(time, delta) {
@@ -525,8 +566,8 @@ class GameScene extends Phaser.Scene {
         p.x += Math.cos(p.angle) * p.speed * dt;
         p.y += Math.sin(p.angle) * p.speed * dt;
         // Wrap around edges
-        if (p.x < -60) p.x = W + 60;
-        else if (p.x > W + 60) p.x = -60;
+        if (p.x < -60) p.x = WORLD_W + 60;
+        else if (p.x > WORLD_W + 60) p.x = -60;
         if (p.y < -60) p.y = H + 60;
         else if (p.y > H + 60) p.y = -60;
         p.sprite.setPosition(p.x, p.y);
@@ -649,7 +690,7 @@ class GameScene extends Phaser.Scene {
   }
 
   clampToMap(x, y) {
-    return { x: Phaser.Math.Clamp(x, 25, W - 25), y: Phaser.Math.Clamp(y, 25, H - 25) };
+    return { x: Phaser.Math.Clamp(x, 25, WORLD_W - 25), y: Phaser.Math.Clamp(y, 25, WORLD_H - 25) };
   }
 
   updateAllHpBars() {
@@ -701,11 +742,13 @@ class GameScene extends Phaser.Scene {
         (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
       btn.disabled = cdLeft > 0;
     });
-    // Position near robot, keep inside canvas
-    let mx = px + 14, my = py - 100;
-    if (mx + 250 > W) mx = px - 254;
+    // Position near robot (screen coords), keep inside canvas
+    const sx = robot.x - this.cameras.main.scrollX;
+    const sy = robot.y - this.cameras.main.scrollY;
+    let mx = sx + 14, my = sy - 100;
+    if (mx + 250 > W) mx = sx - 254;
     if (my < 0) my = 8;
-    if (my + 310 > H) my = H - 315;
+    if (my + 360 > H) my = H - 365;
     menu.style.left = mx + 'px';
     menu.style.top  = my + 'px';
     menu.style.display = 'block';
@@ -963,7 +1006,7 @@ class GameScene extends Phaser.Scene {
       this.time.delayedCall(500, () => {
         // Victory when no red, green, or purple (shotgun bots) remain
         const enemiesAlive = this.robots.filter(r =>
-          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isYellow && !r.isOrange &&
+          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isOrange &&
           !r.isTank && !r.isPlane && !r.isHelicopter
         ).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
@@ -983,6 +1026,7 @@ class GameScene extends Phaser.Scene {
     if (robot.id === 0) {
       selectedRobot = robot;
       this.drawSelectionRing(robot);
+      this.cameras.main.startFollow(robot.sprite, true, 0.1, 0.1);
     }
     this.drawHpBar(robot);
     // Flash white to signal respawn
@@ -1001,14 +1045,14 @@ class GameScene extends Phaser.Scene {
   }
 
   showEndScreen(msg, color) {
-    this.add.rectangle(W / 2, H / 2, 320, 100, 0x000000, 0.85);
+    this.add.rectangle(W / 2, H / 2, 320, 100, 0x000000, 0.85).setScrollFactor(0);
     this.add.text(W / 2, H / 2, msg, {
       fontSize: '42px', color, fontFamily: 'monospace', fontStyle: 'bold',
       stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setScrollFactor(0);
     this.add.text(W / 2, H / 2 + 36, 'Обнови страницу для новой игры', {
       fontSize: '14px', color: '#aaaaaa', fontFamily: 'monospace',
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setScrollFactor(0);
   }
 
   // Simple enemy AI
@@ -1049,30 +1093,6 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  // Yellow robots AI — minigun only, attacks everyone non-yellow
-  yellowTurn() {
-    if (gameOver) return;
-    const yellows = this.robots.filter(r => r.isYellow && r.hp > 0 && !r.respawning);
-    const targets = this.robots.filter(r =>
-      !r.isYellow && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
-    );
-    if (!yellows.length || !targets.length) return;
-    const now = Date.now();
-    const mg = WEAPONS[4];
-    yellows.forEach(yellow => {
-      const target = targets.reduce((a, b) =>
-        Phaser.Math.Distance.Between(yellow.x, yellow.y, a.x, a.y) <
-        Phaser.Math.Distance.Between(yellow.x, yellow.y, b.x, b.y) ? a : b
-      );
-      const dist = Phaser.Math.Distance.Between(yellow.x, yellow.y, target.x, target.y);
-      if ((yellow.cooldowns[4] || 0) <= now && dist <= mg.range &&
-          !this.lineBlockedByWall(yellow.x, yellow.y, target.x, target.y)) {
-        this.attackRobot(yellow, target, 4);
-        return;
-      }
-      this.moveToward(yellow, target.x, target.y, 90);
-    });
-  }
 
   // Orange robot AI — honey grenade (dual rocket), attacks everyone non-orange
   orangeTurn() {
