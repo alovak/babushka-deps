@@ -350,6 +350,26 @@ class GameScene extends Phaser.Scene {
       makeRobot(650,  110, false, 6),        // Extra red 4
     ];
 
+    // ── Yellow team: ground soldiers (laser + grenade) + drones (minigun) ──
+    [[650, 620, 'Y1'], [100, 670, 'Y2'], [1060, 490, 'Y3']].forEach(([x, y, lbl], i) => {
+      const yr = makeRobot(x, y, false, 30 + i);
+      yr.isYellow = true;
+      yr.sprite.setTexture('yellow-robot');
+      yr.label.setText(lbl);
+      yr.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(yr);
+    });
+    // Yellow drones — fly freely, minigun
+    [[310, 490, 'YD1'], [870, 145, 'YD2']].forEach(([x, y, lbl], i) => {
+      const yd = makeRobot(x, y, false, 33 + i);
+      yd.isYellowDrone = true;
+      yd.speed = 120;
+      yd.sprite.setTexture('deploy-drone').setTint(0xffee00);
+      yd.label.setText(lbl);
+      yd.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(yd);
+    });
+
     // ── Map 3 enemies (above map 1, negative y) ───────────────────────────
     robots.push(makeRobot(200,  -700, false, 21));
     robots.push(makeRobot(700,  -600, false, 22));
@@ -473,6 +493,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1500, callback: this.greenTurn, callbackScope: this, loop: true });
     // Orange robot AI timer (honey grenade — attacks everyone)
     this.time.addEvent({ delay: 2200, callback: this.orangeTurn, callbackScope: this, loop: true });
+    // Yellow team AI timer (laser + grenade — attacks everyone non-yellow)
+    this.time.addEvent({ delay: 1800, callback: this.yellowTurn, callbackScope: this, loop: true });
 
 
     // Setup weapon menu buttons
@@ -592,6 +614,30 @@ class GameScene extends Phaser.Scene {
       if (nearest && nearest.d <= mg.range && selectedRobot.cooldowns[4] <= now) {
         this.attackRobot(selectedRobot, nearest.r, 4);
       }
+    }
+
+    // ── Yellow drones: fly freely, minigun ────────────────────────────────
+    if (!gameOver) {
+      const mg = WEAPONS[4];
+      this.robots.filter(r => r.isYellowDrone && r.hp > 0 && !r.respawning).forEach(drone => {
+        const targets = this.robots.filter(r =>
+          !r.isYellow && !r.isYellowDrone && !r.isDeployDrone && r.hp > 0 && !r.respawning
+        );
+        if (!targets.length) return;
+        const nearest = targets.reduce((best, r) => {
+          const d = Phaser.Math.Distance.Between(drone.x, drone.y, r.x, r.y);
+          return (!best || d < best.d) ? { r, d } : best;
+        }, null);
+        const angle = Math.atan2(nearest.r.y - drone.y, nearest.r.x - drone.x);
+        drone.x += Math.cos(angle) * drone.speed * dt;
+        drone.y += Math.sin(angle) * drone.speed * dt;
+        drone.sprite.setPosition(drone.x, drone.y).setRotation(angle + Math.PI / 2);
+        drone.label.setPosition(drone.x, drone.y + 24);
+        this.drawHpBar(drone);
+        if (nearest.d <= mg.range && (drone.cooldowns[4] || 0) <= now) {
+          this.attackRobot(drone, nearest.r, 4);
+        }
+      });
     }
 
     // ── Helicopters orbit movement ─────────────────────────────────────────
@@ -905,7 +951,7 @@ class GameScene extends Phaser.Scene {
     this.drawHpBar(target);
 
     // Shot color: player=weapon color, drone=cyan, tank=lime, shotgun bot=purple, enemy=enemy color
-    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : (attacker.isOrange ? 0xff8800 : w.enemyColor)));
+    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : (attacker.isOrange ? 0xff8800 : (attacker.isYellow || attacker.isYellowDrone ? 0xffee44 : w.enemyColor))));
     if (wIdx === 3) {
       this.showGrenadeEffect(attacker, target);
     } else {
@@ -1164,6 +1210,38 @@ class GameScene extends Phaser.Scene {
         return;
       }
       this.moveToward(orange, target.x, target.y, 85);
+    });
+  }
+
+  // Yellow team AI — laser + grenade, attacks everyone non-yellow
+  yellowTurn() {
+    if (gameOver) return;
+    const yellows = this.robots.filter(r => r.isYellow && r.hp > 0 && !r.respawning);
+    if (!yellows.length) return;
+    const now = Date.now();
+    yellows.forEach(yellow => {
+      const targets = this.robots.filter(r =>
+        !r.isYellow && !r.isYellowDrone && !r.isPlane && !r.isHelicopter &&
+        !r.isDeployDrone && r.hp > 0 && !r.respawning
+      );
+      if (!targets.length) return;
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(yellow.x, yellow.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(yellow.x, yellow.y, b.x, b.y) ? a : b
+      );
+      const dist  = Phaser.Math.Distance.Between(yellow.x, yellow.y, target.x, target.y);
+      const hasLOS = !this.lineBlockedByWall(yellow.x, yellow.y, target.x, target.y);
+      // Grenade through walls if ready
+      if ((yellow.cooldowns[3] || 0) <= now && dist <= WEAPONS[3].range) {
+        this.attackRobot(yellow, target, 3);
+        return;
+      }
+      // Laser with line of sight
+      if ((yellow.cooldowns[0] || 0) <= now && dist <= WEAPONS[0].range && hasLOS) {
+        this.attackRobot(yellow, target, 0);
+        return;
+      }
+      this.moveToward(yellow, target.x, target.y, 90);
     });
   }
 
