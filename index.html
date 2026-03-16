@@ -291,7 +291,7 @@ class GameScene extends Phaser.Scene {
     robots.push(or1);
 
     // Yellow robots — minigun only, independent (attacks everyone non-yellow)
-    [[560, 460, 'Y1'], [200, 180, 'Y2'], [1000, 650, 'Y3']].forEach(([x, y, lbl], i) => {
+    [[560, 460, 'Y1'], [200, 180, 'Y2']].forEach(([x, y, lbl], i) => {
       const yr = makeRobot(x, y, false, 11 + i);
       yr.isYellow = true;
       yr.sprite.setTexture('yellow-robot');
