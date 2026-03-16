@@ -1110,8 +1110,9 @@ class GameScene extends Phaser.Scene {
     });
     this.time.delayedCall(350, () => ex.destroy());
 
-    // Damage all robots and tanks in radius
+    // Damage only red enemies (not blue players, not ally drones)
     this.robots.forEach(r => {
+      if (r.isPlayer || r.isDrone) return;
       if (r.hp <= 0 || r.respawning) return;
       if (Phaser.Math.Distance.Between(x, y, r.x, r.y) < RADIUS) {
         r.hp = Math.max(0, r.hp - DMG);
