@@ -954,11 +954,11 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // Drone AI — orbits P2, shoots laser at red enemies only (not blue players, tanks, bots)
+  // Drone AI — orbits P2, drops bombs on closest red enemy
   droneTurn() {
     if (gameOver) return;
     const drones = this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning);
-    // Only red enemies: exclude players (blue), tanks, shotgun bots, planes, helis, other drones
+    // Only red enemies (not blue players, tanks, shotgun bots, planes, helis)
     const targets = this.robots.filter(r =>
       !r.isPlayer && !r.isTank && !r.isShotgunBot &&
       !r.isPlane && !r.isHelicopter && !r.isDrone &&
@@ -967,18 +967,17 @@ class GameScene extends Phaser.Scene {
     if (!drones.length || !targets.length) return;
 
     const now = Date.now();
-    const laser = WEAPONS[0]; // drones have one laser each
+    const BOMB_CD = 5000, BOMB_RANGE = 320;
 
     drones.forEach(drone => {
-      // Find closest enemy
       const target = targets.reduce((a, b) =>
         Phaser.Math.Distance.Between(drone.x, drone.y, a.x, a.y) <
         Phaser.Math.Distance.Between(drone.x, drone.y, b.x, b.y) ? a : b
       );
       const dist = Phaser.Math.Distance.Between(drone.x, drone.y, target.x, target.y);
-      if (drone.cooldowns[0] <= now && dist <= laser.range &&
-          !this.lineBlockedByWall(drone.x, drone.y, target.x, target.y)) {
-        this.attackRobot(drone, target, 0);
+      if (drone.cooldowns[0] <= now && dist <= BOMB_RANGE) {
+        drone.cooldowns[0] = now + BOMB_CD;
+        this.dropBomb(target.x, target.y);
       }
     });
   }
