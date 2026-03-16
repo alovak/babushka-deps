@@ -42,7 +42,8 @@
     <button class="weapon-btn" id="w3"></button>
     <button class="weapon-btn" id="w4"></button>
     <button class="weapon-btn" id="w5"></button>
-    <button class="weapon-btn" id="w6" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+    <button class="weapon-btn" id="w6"></button>
+    <button class="weapon-btn" id="w7" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
   </div>
 </div>
 
@@ -60,7 +61,7 @@ const WEAPONS = [
   { name: '💣 Граната',  dmg: 999, cd: 7000, range: 280, color: 0x44ff44, desc: 'Через стены / убивает', noLOS: true, playerOnly: true },
   { name: '🔥 Миниган',  dmg: 8,   cd: 60,   range: 260, color: 0xff4400, enemyColor: 0xff4400, desc: '1000 пуль/мин · авто', playerOnly: true, minigun: true },
   { name: '🚁 Дрон',    dmg: 0,   cd: 0,    range: 0,   color: 0x44ddff, desc: 'Выпустить дрон с миниганом', playerOnly: true, droneWeapon: true },
-  { name: '🍯 Мёд',    dmg: 45,  cd: 2000, range: 280, color: 0xff8800, enemyColor: 0xff8800, desc: 'Двойная ракета · 2с', dualRocket: true, aiOnly: true },
+  { name: '🍯 Мёд',    dmg: 45,  cd: 2000, range: 280, color: 0xff8800, enemyColor: 0xff8800, desc: 'Двойная ракета · 2с', dualRocket: true, playerOnly: true },
 ];
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
@@ -437,8 +438,8 @@ class GameScene extends Phaser.Scene {
 
 
     // Setup weapon menu buttons
-    document.getElementById('w6').onclick = () => this.hideWeaponMenu();
-    [0, 1, 2, 3, 4, 5].forEach(i => {
+    document.getElementById('w7').onclick = () => this.hideWeaponMenu();
+    [0, 1, 2, 3, 4, 5, 6].forEach(i => {
       const btn = document.getElementById('w' + i);
       btn.ontouchstart = btn.onclick = (e) => {
         e.stopPropagation();
