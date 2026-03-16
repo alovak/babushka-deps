@@ -965,11 +965,16 @@ class GameScene extends Phaser.Scene {
   droneTurn() {
     if (gameOver) return;
     const drones = this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning);
-    const targets = this.robots.filter(r =>
-      !r.isPlayer && !r.isTank && !r.isShotgunBot &&
-      !r.isPlane && !r.isHelicopter && !r.isDrone &&
-      r.hp > 0 && !r.respawning
-    );
+    const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
+    const targets = this.robots.filter(r => {
+      if (r.isPlayer || r.isTank || r.isShotgunBot ||
+          r.isPlane || r.isHelicopter || r.isDrone) return false;
+      if (r.hp <= 0 || r.respawning) return false;
+      // Skip red enemy if standing too close to P1 or P2
+      return players.every(p =>
+        Phaser.Math.Distance.Between(r.x, r.y, p.x, p.y) >= 90
+      );
+    });
     if (!drones.length || !targets.length) return;
 
     const now = Date.now();
