@@ -975,7 +975,12 @@ class GameScene extends Phaser.Scene {
         Phaser.Math.Distance.Between(drone.x, drone.y, b.x, b.y) ? a : b
       );
       const dist = Phaser.Math.Distance.Between(drone.x, drone.y, target.x, target.y);
-      if (drone.cooldowns[0] <= now && dist <= BOMB_RANGE) {
+      // Don't drop bomb if target is too close to P1 or P2
+      const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
+      const safeFromBlue = players.every(p =>
+        Phaser.Math.Distance.Between(target.x, target.y, p.x, p.y) >= 90
+      );
+      if (drone.cooldowns[0] <= now && dist <= BOMB_RANGE && safeFromBlue) {
         drone.cooldowns[0] = now + BOMB_CD;
         this.dropBomb(target.x, target.y);
       }
