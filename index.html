@@ -923,7 +923,11 @@ class GameScene extends Phaser.Scene {
       });
     } else {
       this.time.delayedCall(500, () => {
-        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isDeployDrone && !r.isGreen && !r.isYellow && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0).length;
+        // Victory when no red, green, or purple (shotgun bots) remain
+        const enemiesAlive = this.robots.filter(r =>
+          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isYellow &&
+          !r.isTank && !r.isPlane && !r.isHelicopter
+        ).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
     }
