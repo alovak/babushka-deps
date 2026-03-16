@@ -59,6 +59,7 @@ const WEAPONS = [
   { name: '💣 Граната',  dmg: 999, cd: 7000, range: 280, color: 0x44ff44, desc: 'Через стены / убивает', noLOS: true, playerOnly: true },
   { name: '🔥 Миниган',  dmg: 8,   cd: 60,   range: 260, color: 0xff4400, enemyColor: 0xff4400, desc: '1000 пуль/мин · авто', playerOnly: true, minigun: true },
   { name: '🚁 Дрон',    dmg: 0,   cd: 0,    range: 0,   color: 0x44ddff, desc: 'Выпустить дрон с миниганом', playerOnly: true, droneWeapon: true },
+  { name: '🍯 Мёд',    dmg: 45,  cd: 2000, range: 280, color: 0xff8800, enemyColor: 0xff8800, desc: 'Двойная ракета · 2с', dualRocket: true, aiOnly: true },
 ];
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
@@ -178,6 +179,17 @@ class GameScene extends Phaser.Scene {
     g.fillEllipse(26, 20, 12, 10); // cockpit canopy
     g.generateTexture('helicopter', 40, 40);
 
+    // Orange robot
+    g.clear();
+    g.fillStyle(0xcc4400, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xff9944, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xff6600, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('orange-robot', 36, 36);
+
     // Yellow robot
     g.clear();
     g.fillStyle(0x998800, 1);
@@ -269,6 +281,14 @@ class GameScene extends Phaser.Scene {
       makeRobot(340,  450, false, 5),        // Extra red 3
       makeRobot(650,  110, false, 6),        // Extra red 4
     ];
+
+    // Orange robot — honey grenade (dual rocket), attacks everyone non-orange
+    const or1 = makeRobot(400, 720, false, 14);
+    or1.isOrange = true;
+    or1.sprite.setTexture('orange-robot');
+    or1.label.setText('O1');
+    or1.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(or1);
 
     // Yellow robots — minigun only, independent (attacks everyone non-yellow)
     [[560, 460, 'Y1'], [200, 180, 'Y2'], [1000, 650, 'Y3']].forEach(([x, y, lbl], i) => {
@@ -366,6 +386,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1800, callback: this.shotgunBotTurn, callbackScope: this, loop: true });
     // Green team AI timer (laser only — attacks red enemies)
     this.time.addEvent({ delay: 1500, callback: this.greenTurn, callbackScope: this, loop: true });
+    // Orange robot AI timer (honey grenade — attacks everyone)
+    this.time.addEvent({ delay: 2200, callback: this.orangeTurn, callbackScope: this, loop: true });
     // Yellow robot AI timer (minigun only — attacks everyone)
     this.time.addEvent({ delay: 200,  callback: this.yellowTurn, callbackScope: this, loop: true });
 
@@ -664,6 +686,7 @@ class GameScene extends Phaser.Scene {
     const menu = document.getElementById('weapon-menu');
     const now = Date.now();
     WEAPONS.forEach((w, i) => {
+      if (w.aiOnly) return;
       const btn = document.getElementById('w' + i);
       const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
       if (w.droneWeapon) {
@@ -792,7 +815,7 @@ class GameScene extends Phaser.Scene {
     this.drawHpBar(target);
 
     // Shot color: player=weapon color, drone=cyan, tank=lime, shotgun bot=purple, enemy=enemy color
-    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : w.enemyColor));
+    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : (attacker.isOrange ? 0xff8800 : w.enemyColor)));
     if (wIdx === 3) {
       this.showGrenadeEffect(attacker, target);
     } else {
@@ -803,6 +826,21 @@ class GameScene extends Phaser.Scene {
 
     if (target.hp <= 0) {
       this.killRobot(target);
+      return;
+    }
+
+    // Dual rocket: fire a second shot after 220ms
+    if (w.dualRocket) {
+      this.time.delayedCall(220, () => {
+        if (target.hp <= 0 || gameOver) return;
+        const dmg2 = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+        target.hp = Math.max(0, target.hp - dmg2);
+        this.drawHpBar(target);
+        this.showShotEffect(attacker, target, shotColor);
+        this.showDmgNumber(target.x, target.y, dmg2, shotColor);
+        this.updateStatus(`${attacker.label.text} — вторая ракета → ${target.label.text}: -${dmg2} HP`);
+        if (target.hp <= 0) this.killRobot(target);
+      });
     }
   }
 
@@ -925,7 +963,7 @@ class GameScene extends Phaser.Scene {
       this.time.delayedCall(500, () => {
         // Victory when no red, green, or purple (shotgun bots) remain
         const enemiesAlive = this.robots.filter(r =>
-          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isYellow &&
+          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isYellow && !r.isOrange &&
           !r.isTank && !r.isPlane && !r.isHelicopter
         ).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
@@ -1034,6 +1072,30 @@ class GameScene extends Phaser.Scene {
       }
       this.moveToward(yellow, target.x, target.y, 90);
     });
+  }
+
+  // Orange robot AI — honey grenade (dual rocket), attacks everyone non-orange
+  orangeTurn() {
+    if (gameOver) return;
+    const orange = this.robots.find(r => r.isOrange && r.hp > 0 && !r.respawning);
+    if (!orange) return;
+    const targets = this.robots.filter(r =>
+      !r.isOrange && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+    );
+    if (!targets.length) return;
+    const now = Date.now();
+    const honey = WEAPONS[7];
+    const target = targets.reduce((a, b) =>
+      Phaser.Math.Distance.Between(orange.x, orange.y, a.x, a.y) <
+      Phaser.Math.Distance.Between(orange.x, orange.y, b.x, b.y) ? a : b
+    );
+    const dist = Phaser.Math.Distance.Between(orange.x, orange.y, target.x, target.y);
+    if ((orange.cooldowns[7] || 0) <= now && dist <= honey.range &&
+        !this.lineBlockedByWall(orange.x, orange.y, target.x, target.y)) {
+      this.attackRobot(orange, target, 7);
+      return;
+    }
+    this.moveToward(orange, target.x, target.y, 85);
   }
 
   // Green team AI — laser only, attack red enemies
