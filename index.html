@@ -41,14 +41,15 @@
     <button class="weapon-btn" id="w2"></button>
     <button class="weapon-btn" id="w3"></button>
     <button class="weapon-btn" id="w4"></button>
-    <button class="weapon-btn" id="w5" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+    <button class="weapon-btn" id="w5"></button>
+    <button class="weapon-btn" id="w6" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
 <script>
 // ── CONFIG ─────────────────────────────────────────────────────────────────
-const W = 800, H = 600;
+const W = 1200, H = 850;
 const TILE = 40;
 
 const WEAPONS = [
@@ -57,6 +58,7 @@ const WEAPONS = [
   { name: '💥 Дробовик', dmg: 30,  cd: 2000, range: 150, color: 0xffff00, enemyColor: 0xff4400, desc: 'Средне / близко' },
   { name: '💣 Граната',  dmg: 999, cd: 7000, range: 280, color: 0x44ff44, desc: 'Через стены / убивает', noLOS: true, playerOnly: true },
   { name: '🔥 Миниган',  dmg: 8,   cd: 60,   range: 260, color: 0xff4400, enemyColor: 0xff4400, desc: '1000 пуль/мин · авто', playerOnly: true, minigun: true },
+  { name: '🚁 Дрон',    dmg: 0,   cd: 0,    range: 0,   color: 0x44ddff, desc: 'Выпустить дрон с миниганом', playerOnly: true, droneWeapon: true },
 ];
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
@@ -65,16 +67,38 @@ let armedWeapon = null;
 let robots = [];
 let gameOver = false;
 let lives = 5;
+let deployedDrone = null;
 
 // ── OBSTACLE LAYOUT ─────────────────────────────────────────────────────────
 const WALLS = [
-  { x: 200, y: 120, w: 40,  h: 120 },
-  { x: 400, y: 80,  w: 120, h: 40  },
-  { x: 560, y: 200, w: 40,  h: 160 },
-  { x: 300, y: 300, w: 160, h: 40  },
-  { x: 120, y: 380, w: 40,  h: 120 },
-  { x: 600, y: 400, w: 120, h: 40  },
-  { x: 380, y: 460, w: 40,  h: 100 },
+  // Left column L-shape
+  { x: 240, y: 100, w: 40,  h: 200 },
+  { x: 240, y: 100, w: 160, h: 40  },
+  // Center-top bar + right post
+  { x: 500, y: 200, w: 200, h: 40  },
+  { x: 700, y: 200, w: 40,  h: 170 },
+  // Far right top block
+  { x: 900, y: 100, w: 40,  h: 160 },
+  { x: 940, y: 100, w: 180, h: 40  },
+  // Left mid horizontal
+  { x: 100, y: 400, w: 200, h: 40  },
+  // Center mid T-shape
+  { x: 480, y: 380, w: 40,  h: 220 },
+  { x: 480, y: 380, w: 180, h: 40  },
+  // Right mid passage
+  { x: 780, y: 360, w: 160, h: 40  },
+  { x: 980, y: 300, w: 40,  h: 180 },
+  // Lower left L
+  { x: 180, y: 560, w: 40,  h: 160 },
+  { x: 180, y: 560, w: 140, h: 40  },
+  // Lower center pillar
+  { x: 600, y: 570, w: 40,  h: 240 },
+  { x: 600, y: 750, w: 200, h: 40  },
+  // Lower right block
+  { x: 820, y: 620, w: 200, h: 40  },
+  { x: 1060, y: 520, w: 40, h: 240 },
+  // Bottom mid barrier
+  { x: 360, y: 730, w: 180, h: 40  },
 ];
 
 // ── PHASER SCENE ─────────────────────────────────────────────────────────────
@@ -154,6 +178,24 @@ class GameScene extends Phaser.Scene {
     g.fillEllipse(26, 20, 12, 10); // cockpit canopy
     g.generateTexture('helicopter', 40, 40);
 
+    // Deploy-drone sprite: cyan quadcopter
+    g.clear();
+    g.fillStyle(0x112233, 1);
+    g.fillRect(2, 14, 12, 4);
+    g.fillRect(22, 14, 12, 4);
+    g.fillRect(14, 2, 4, 12);
+    g.fillRect(14, 22, 4, 12);
+    g.fillStyle(0x00ccff, 0.9);
+    g.fillCircle(6,  16, 5);
+    g.fillCircle(30, 16, 5);
+    g.fillCircle(16, 6,  5);
+    g.fillCircle(16, 30, 5);
+    g.fillStyle(0x0066aa, 1);
+    g.fillCircle(16, 16, 7);
+    g.fillStyle(0x44ffff, 1);
+    g.fillRect(19, 14, 7, 4);
+    g.generateTexture('deploy-drone', 36, 36);
+
     g.destroy();
   }
 
@@ -175,7 +217,7 @@ class GameScene extends Phaser.Scene {
     const makeRobot = (x, y, isPlayer, id, isTank = false) => ({
       id, isPlayer, isTank, x, y, spawnX: x, spawnY: y,
       hp: isTank ? 38 : 100, maxHp: isTank ? 38 : 100, respawning: false,
-      cooldowns: [0, 0, 0],
+      cooldowns: [0, 0, 0, 0, 0, 0],
       sprite: this.add.image(x, y,
         isTank ? 'tank' : (isPlayer ? 'player-robot' : 'enemy-robot')
       ).setOrigin(0.5),
@@ -191,19 +233,19 @@ class GameScene extends Phaser.Scene {
     });
 
     robots = [
-      makeRobot(100, 200, true,  0),
-      makeRobot(80,  530, true,  1),
-      makeRobot(160, 530, true,  2),
-      makeRobot(700, 140, false, 0),
-      makeRobot(700, 520, false, 1),
-      makeRobot(680, 330, false, 2),
-      makeRobot(390, 180, false, 0, true),  // Tank 1
-      makeRobot(360, 410, false, 1, true),  // Tank 2
-      makeRobot(500, 300, false, 2, true),  // Tank 3
+      makeRobot(100, 300, true,  0),
+      makeRobot(80,  750, true,  1),
+      makeRobot(170, 750, true,  2),
+      makeRobot(1060, 180, false, 0),
+      makeRobot(1060, 700, false, 1),
+      makeRobot(1060, 440, false, 2),
+      makeRobot(580,  220, false, 0, true),  // Tank 1
+      makeRobot(540,  620, false, 1, true),  // Tank 2
+      makeRobot(780,  420, false, 2, true),  // Tank 3
     ];
 
     // Shotgun bot (single) — purple faction, attacks everyone
-    const s1 = makeRobot(550, 75, false, 3);
+    const s1 = makeRobot(820, 100, false, 3);
     s1.isShotgunBot = true;
     s1.shotgunOnly = true;
     s1.sprite.setTexture('shotgun-robot');
@@ -212,7 +254,7 @@ class GameScene extends Phaser.Scene {
     robots.push(s1);
 
     // Dual-shotgun bot 1 — purple faction, attacks everyone
-    const ds1 = makeRobot(200, 490, false, 4);
+    const ds1 = makeRobot(280, 680, false, 4);
     ds1.isShotgunBot = true;
     ds1.shotgunOnly = true;
     ds1.dualShotgun = true;
@@ -222,7 +264,7 @@ class GameScene extends Phaser.Scene {
     robots.push(ds1);
 
     // Dual-shotgun bot 2 — purple faction, attacks everyone
-    const ds2 = makeRobot(350, 75, false, 5);
+    const ds2 = makeRobot(490, 80, false, 5);
     ds2.isShotgunBot = true;
     ds2.shotgunOnly = true;
     ds2.dualShotgun = true;
@@ -278,8 +320,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1800, callback: this.shotgunBotTurn, callbackScope: this, loop: true });
 
     // Setup weapon menu buttons
-    document.getElementById('w5').onclick = () => this.hideWeaponMenu();
-    [0, 1, 2, 3, 4].forEach(i => {
+    document.getElementById('w6').onclick = () => this.hideWeaponMenu();
+    [0, 1, 2, 3, 4, 5].forEach(i => {
       const btn = document.getElementById('w' + i);
       btn.ontouchstart = btn.onclick = (e) => {
         e.stopPropagation();
@@ -294,11 +336,11 @@ class GameScene extends Phaser.Scene {
 
     // ── Helicopters (orbit patrol, shoot laser at everyone) ───────────────
     [
-      { cx: 280, cy: 220, r: 110, a: 0,                  speed: 0.9  },
-      { cx: 560, cy: 390, r: 100, a: Math.PI,            speed: 1.1  },
-      { cx: 150, cy: 460, r:  80, a: Math.PI / 2,        speed: 1.3  },
-      { cx: 660, cy: 160, r:  90, a: Math.PI * 1.5,      speed: 1.0  },
-      { cx: 420, cy: 300, r:  70, a: Math.PI * 0.75,     speed: 1.4  },
+      { cx: 360, cy: 310, r: 140, a: 0,               speed: 0.9  },
+      { cx: 820, cy: 530, r: 130, a: Math.PI,         speed: 1.1  },
+      { cx: 160, cy: 550, r:  90, a: Math.PI / 2,     speed: 1.3  },
+      { cx: 700, cy: 180, r: 100, a: Math.PI * 1.5,   speed: 1.0  },
+      { cx: 480, cy: 420, r:  80, a: Math.PI * 0.75,  speed: 1.4  },
     ].forEach((hd, i) => {
       const hx = hd.cx + Math.cos(hd.a) * hd.r;
       const hy = hd.cy + Math.sin(hd.a) * hd.r;
@@ -321,9 +363,9 @@ class GameScene extends Phaser.Scene {
 
     // ── Planes (added to robots array so they can be shot) ────────────────
     [
-      { x: -30,  y: 160, angle: 0.15,             speed: 130, dropIn: 2.5 },
-      { x: W+30, y: 440, angle: Math.PI - 0.2,    speed: 115, dropIn: 1.2 },
-      { x: 200,  y: -30, angle: Math.PI/2 + 0.1,  speed: 120, dropIn: 3.8 },
+      { x: -30,  y: 220, angle: 0.12,             speed: 130, dropIn: 2.5 },
+      { x: W+30, y: 620, angle: Math.PI - 0.15,   speed: 115, dropIn: 1.2 },
+      { x: 560,  y: -30, angle: Math.PI/2 + 0.1,  speed: 120, dropIn: 3.8 },
     ].forEach((pd, i) => {
       const plane = {
         id: i, isPlayer: false, isTank: false, isPlane: true,
@@ -346,6 +388,36 @@ class GameScene extends Phaser.Scene {
     const now = Date.now();
     const dt = delta / 1000; // seconds
 
+
+    // ── Deployed drone: move toward enemy + minigun auto-fire ─────────────
+    if (!gameOver && deployedDrone && deployedDrone.hp > 0 && !deployedDrone.respawning) {
+      const mg = WEAPONS[4];
+      const droneEnemies = this.robots.filter(r =>
+        !r.isPlayer && !r.isDeployDrone && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+      );
+      if (droneEnemies.length) {
+        const nearest = droneEnemies.reduce((best, r) => {
+          const d = Phaser.Math.Distance.Between(deployedDrone.x, deployedDrone.y, r.x, r.y);
+          return (!best || d < best.d) ? { r, d } : best;
+        }, null);
+        // Fly toward target
+        const angle = Math.atan2(nearest.r.y - deployedDrone.y, nearest.r.x - deployedDrone.x);
+        const step = deployedDrone.speed * dt;
+        const newX = deployedDrone.x + Math.cos(angle) * step;
+        const newY = deployedDrone.y + Math.sin(angle) * step;
+        if (!this.isWall(newX, newY)) {
+          deployedDrone.x = newX; deployedDrone.y = newY;
+        }
+        deployedDrone.sprite.setPosition(deployedDrone.x, deployedDrone.y);
+        deployedDrone.sprite.setRotation(angle + Math.PI / 2);
+        deployedDrone.label.setPosition(deployedDrone.x, deployedDrone.y + 24);
+        this.drawHpBar(deployedDrone);
+        // Minigun fire
+        if (nearest.d <= mg.range && deployedDrone.cooldowns[4] <= now) {
+          this.attackRobot(deployedDrone, nearest.r, 4);
+        }
+      }
+    }
 
     // ── Minigun auto-fire ──────────────────────────────────────────────────
     if (!gameOver && armedWeapon === 4 && selectedRobot && selectedRobot.hp > 0) {
@@ -543,8 +615,15 @@ class GameScene extends Phaser.Scene {
     const now = Date.now();
     WEAPONS.forEach((w, i) => {
       const btn = document.getElementById('w' + i);
-      const cdLeft = Math.max(0, robot.cooldowns[i] - now);
       const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
+      if (w.droneWeapon) {
+        const inBattle = deployedDrone && deployedDrone.hp > 0;
+        btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc}</small>` +
+          (inBattle ? `<span class="cooldown">в бою</span>` : '');
+        btn.disabled = !!inBattle;
+        return;
+      }
+      const cdLeft = Math.max(0, (robot.cooldowns[i] || 0) - now);
       btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc} · радиус ${w.range}</small>` +
         (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
       btn.disabled = cdLeft > 0;
@@ -566,8 +645,38 @@ class GameScene extends Phaser.Scene {
 
   selectWeapon(idx) {
     this.hideWeaponMenu();
+    if (WEAPONS[idx].droneWeapon) {
+      if (deployedDrone && deployedDrone.hp > 0) {
+        this.updateStatus('Дрон уже в бою! Подожди пока его не уничтожат.');
+        return;
+      }
+      this.deployDrone();
+      return;
+    }
     armedWeapon = idx;
     this.updateStatus(`${WEAPONS[idx].name} готово — тапни на врага для атаки`);
+  }
+
+  deployDrone() {
+    if (!selectedRobot || selectedRobot.hp <= 0) return;
+    const dx = selectedRobot.x + 35, dy = selectedRobot.y - 35;
+    const drone = {
+      id: 99, isPlayer: false, isDeployDrone: true,
+      isTank: false, isPlane: false, isHelicopter: false, isShotgunBot: false,
+      x: dx, y: dy, spawnX: dx, spawnY: dy,
+      hp: 50, maxHp: 50, respawning: false,
+      cooldowns: [0, 0, 0, 0, 0, 0],
+      speed: 140,
+      sprite: this.add.image(dx, dy, 'deploy-drone').setOrigin(0.5).setScale(0.85),
+      selectionRing: this.add.graphics(),
+      hpBar: this.add.graphics(),
+      cdBar: this.add.graphics(),
+      label: this.add.text(dx, dy + 24, 'D', { fontSize: '10px', color: '#44ddff', fontFamily: 'monospace' }).setOrigin(0.5),
+    };
+    deployedDrone = drone;
+    this.robots.push(drone);
+    this.drawHpBar(drone);
+    this.updateStatus('Дрон запущен — атакует ближайшего врага!');
   }
 
   moveRobot(robot, tx, ty) {
@@ -733,6 +842,18 @@ class GameScene extends Phaser.Scene {
       robot.cdBar.clear();
     });
 
+    if (robot.isDeployDrone) {
+      deployedDrone = null;
+      this.robots = this.robots.filter(r => r !== robot);
+      this.tweens.add({
+        targets: robot.sprite, angle: 360, alpha: 0,
+        duration: 500, ease: 'Power2',
+        onComplete: () => { robot.sprite.setVisible(false); robot.hpBar.clear(); robot.label.setVisible(false); }
+      });
+      this.updateStatus('Дрон уничтожен! Зайди в арсенал → выпусти нового.');
+      return;
+    }
+
     if (robot.isPlayer) {
       lives--;
       this.updateLivesBar();
@@ -752,7 +873,7 @@ class GameScene extends Phaser.Scene {
       });
     } else {
       this.time.delayedCall(500, () => {
-        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0).length;
+        const enemiesAlive = this.robots.filter(r => !r.isPlayer && !r.isDeployDrone && !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
     }
@@ -761,7 +882,7 @@ class GameScene extends Phaser.Scene {
   respawnRobot(robot) {
     robot.hp = robot.maxHp;
     robot.respawning = false;
-    robot.cooldowns = [0, 0, 0];
+    robot.cooldowns = [0, 0, 0, 0, 0, 0];
     robot.x = robot.spawnX;
     robot.y = robot.spawnY;
     robot.sprite.setPosition(robot.spawnX, robot.spawnY);
@@ -801,10 +922,10 @@ class GameScene extends Phaser.Scene {
   // Simple enemy AI
   enemyTurn() {
     if (gameOver) return;
-    // Exclude shotgun bots — they have their own AI
-    const enemies = this.robots.filter(r => !r.isPlayer && !r.isTank && !r.isPlane && !r.isHelicopter && !r.isShotgunBot && r.hp > 0);
-    // Red robots fight players AND shotgun bots (they attack red too)
-    const players = this.robots.filter(r => (r.isPlayer || r.isShotgunBot) && r.hp > 0 && !r.respawning);
+    // Exclude shotgun bots and deploy drone — they have separate AI
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isDeployDrone && !r.isTank && !r.isPlane && !r.isHelicopter && !r.isShotgunBot && r.hp > 0);
+    // Red robots fight blue players, deploy drone, AND shotgun bots
+    const players = this.robots.filter(r => (r.isPlayer || r.isShotgunBot || r.isDeployDrone) && r.hp > 0 && !r.respawning);
     if (!enemies.length || !players.length) return;
 
     enemies.forEach(enemy => {
@@ -818,10 +939,11 @@ class GameScene extends Phaser.Scene {
       const now = Date.now();
       const hasLOS = !this.lineBlockedByWall(enemy.x, enemy.y, target.x, target.y);
 
-      // Normal robots: pick best available weapon in range
+      // Normal robots: pick best available weapon in range (skip player-only)
       let bestW = -1;
       WEAPONS.forEach((w, i) => {
-        if (enemy.cooldowns[i] <= now && dist <= w.range && hasLOS)
+        if (w.playerOnly) return;
+        if ((enemy.cooldowns[i] || 0) <= now && dist <= w.range && hasLOS)
           if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
       });
 
@@ -889,7 +1011,7 @@ class GameScene extends Phaser.Scene {
     // Use all weapons (including playerOnly, skip minigun auto — handled in update)
     let bestW = -1;
     WEAPONS.forEach((w, i) => {
-      if (w.minigun) return;
+      if (w.minigun || w.droneWeapon) return;
       if (w.noLOS && dist <= w.range) { if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return; }
       if (p3.cooldowns[i] <= now && dist <= w.range && hasLOS)
         if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
