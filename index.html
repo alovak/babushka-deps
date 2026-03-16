@@ -333,23 +333,20 @@ class GameScene extends Phaser.Scene {
       robots.push(heli);
     });
 
-    // ── Drones (orbit P2, ally, laser only) ───────────────────────────────
-    const p2 = robots[1];
-    [0, Math.PI].forEach((startAngle, i) => {
-      const dx = p2.x + Math.cos(startAngle) * 60;
-      const dy = p2.y + Math.sin(startAngle) * 60;
+    // ── Drones (free flight across map, bomb red enemies) ─────────────────
+    [{ x: 60, y: 100 }, { x: 140, y: 100 }].forEach((pos, i) => {
       const drone = {
         id: i, isPlayer: false, isTank: false, isPlane: false, isHelicopter: false,
         isDrone: true,
-        x: dx, y: dy, spawnX: dx, spawnY: dy,
+        x: pos.x, y: pos.y, spawnX: pos.x, spawnY: pos.y,
         hp: 35, maxHp: 35, respawning: false,
         cooldowns: [0, 0, 0, 0],
-        orbitAngle: startAngle, orbitR: 60, orbitSpeed: 1.8,
-        sprite: this.add.image(dx, dy, 'drone').setOrigin(0.5).setScale(0.8),
+        speed: 130,
+        sprite: this.add.image(pos.x, pos.y, 'drone').setOrigin(0.5).setScale(0.8),
         selectionRing: this.add.graphics(),
         hpBar: this.add.graphics(),
         cdBar: this.add.graphics(),
-        label: this.add.text(dx, dy + 22, `D${i + 1}`,
+        label: this.add.text(pos.x, pos.y + 22, `D${i + 1}`,
           { fontSize: '10px', color: '#44ddff', fontFamily: 'monospace' }).setOrigin(0.5),
       };
       robots.push(drone);
@@ -382,16 +379,23 @@ class GameScene extends Phaser.Scene {
     const now = Date.now();
     const dt = delta / 1000; // seconds
 
-    // ── Drones orbit P2 ────────────────────────────────────────────────────
+    // ── Drones fly freely toward nearest red enemy ─────────────────────────
     if (!gameOver) {
-      const p2 = this.robots[1];
+      const redEnemies = this.robots.filter(r =>
+        !r.isPlayer && !r.isTank && !r.isShotgunBot &&
+        !r.isPlane && !r.isHelicopter && !r.isDrone && r.hp > 0
+      );
       this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning).forEach(d => {
-        d.orbitAngle += d.orbitSpeed * dt;
-        // Orbit current P2 position (drones follow P2)
-        d.x = p2.x + Math.cos(d.orbitAngle) * d.orbitR;
-        d.y = p2.y + Math.sin(d.orbitAngle) * d.orbitR;
+        if (!redEnemies.length) return;
+        const target = redEnemies.reduce((a, b) =>
+          Phaser.Math.Distance.Between(d.x, d.y, a.x, a.y) <
+          Phaser.Math.Distance.Between(d.x, d.y, b.x, b.y) ? a : b
+        );
+        const angle = Math.atan2(target.y - d.y, target.x - d.x);
+        d.x += Math.cos(angle) * d.speed * dt;
+        d.y += Math.sin(angle) * d.speed * dt;
         d.sprite.setPosition(d.x, d.y);
-        d.sprite.setRotation(d.orbitAngle + Math.PI / 2);
+        d.sprite.setRotation(angle + Math.PI / 2);
         d.label.setPosition(d.x, d.y + 22);
         this.drawHpBar(d);
       });
@@ -792,8 +796,11 @@ class GameScene extends Phaser.Scene {
             robot.hp = robot.maxHp;
             robot.respawning = false;
             robot.cooldowns = [0, 0, 0, 0];
-            robot.sprite.setVisible(true).setAlpha(1).setAngle(0);
-            robot.label.setVisible(true);
+            robot.x = robot.spawnX;
+            robot.y = robot.spawnY;
+            robot.sprite.setPosition(robot.spawnX, robot.spawnY)
+              .setVisible(true).setAlpha(1).setAngle(0);
+            robot.label.setPosition(robot.spawnX, robot.spawnY + 22).setVisible(true);
             this.drawHpBar(robot);
             this.updateStatus(`Дрон D${robot.id + 1} вернулся!`);
           });
@@ -954,11 +961,10 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // Drone AI — orbits P2, drops bombs on closest red enemy
+  // Drone AI — drops bomb directly on red enemy when close enough
   droneTurn() {
     if (gameOver) return;
     const drones = this.robots.filter(r => r.isDrone && r.hp > 0 && !r.respawning);
-    // Only red enemies (not blue players, tanks, shotgun bots, planes, helis)
     const targets = this.robots.filter(r =>
       !r.isPlayer && !r.isTank && !r.isShotgunBot &&
       !r.isPlane && !r.isHelicopter && !r.isDrone &&
@@ -967,7 +973,6 @@ class GameScene extends Phaser.Scene {
     if (!drones.length || !targets.length) return;
 
     const now = Date.now();
-    const BOMB_CD = 5000, BOMB_RANGE = 320;
 
     drones.forEach(drone => {
       const target = targets.reduce((a, b) =>
@@ -975,13 +980,9 @@ class GameScene extends Phaser.Scene {
         Phaser.Math.Distance.Between(drone.x, drone.y, b.x, b.y) ? a : b
       );
       const dist = Phaser.Math.Distance.Between(drone.x, drone.y, target.x, target.y);
-      // Don't drop bomb if target is too close to P1 or P2
-      const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
-      const safeFromBlue = players.every(p =>
-        Phaser.Math.Distance.Between(target.x, target.y, p.x, p.y) >= 90
-      );
-      if (drone.cooldowns[0] <= now && dist <= BOMB_RANGE && safeFromBlue) {
-        drone.cooldowns[0] = now + BOMB_CD;
+      // Drop bomb right on the red enemy when drone is above them
+      if (drone.cooldowns[0] <= now && dist <= 80) {
+        drone.cooldowns[0] = now + 5000;
         this.dropBomb(target.x, target.y);
       }
     });
