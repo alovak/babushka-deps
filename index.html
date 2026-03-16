@@ -193,6 +193,7 @@ class GameScene extends Phaser.Scene {
     robots = [
       makeRobot(100, 200, true,  0),
       makeRobot(80,  530, true,  1),
+      makeRobot(160, 530, true,  2),
       makeRobot(700, 140, false, 0),
       makeRobot(700, 520, false, 1),
       makeRobot(680, 330, false, 2),
@@ -267,6 +268,8 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 2200, callback: this.enemyTurn,     callbackScope: this, loop: true });
     // Companion AI timer (P2)
     this.time.addEvent({ delay: 1600, callback: this.companionTurn, callbackScope: this, loop: true });
+    // P3 AI timer
+    this.time.addEvent({ delay: 1400, callback: this.p3Turn, callbackScope: this, loop: true });
     // Tank AI timer
     this.time.addEvent({ delay: 1900, callback: this.tankTurn,      callbackScope: this, loop: true });
     // Helicopter AI timer
@@ -775,7 +778,8 @@ class GameScene extends Phaser.Scene {
       duration: 150, yoyo: true, repeat: 4,
       onComplete: () => robot.sprite.setAlpha(1)
     });
-    this.updateStatus(`P1 возродился! Жизней осталось: ${lives}`);
+    const pName = `P${robot.id + 1}`;
+    this.updateStatus(robot.id === 0 ? `${pName} возродился! Жизней осталось: ${lives}` : `${pName} вернулся в бой!`);
   }
 
   updateLivesBar() {
@@ -864,6 +868,39 @@ class GameScene extends Phaser.Scene {
 
     // Can't shoot — move closer
     this.moveToward(companion, target.x, target.y, 100);
+  }
+
+  // P3 AI — full arsenal including playerOnly weapons
+  p3Turn() {
+    if (gameOver) return;
+    const p3 = this.robots.find(r => r.isPlayer && r.id === 2 && r.hp > 0 && !r.respawning);
+    if (!p3) return;
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isPlane && !r.isHelicopter && r.hp > 0);
+    if (!enemies.length) return;
+
+    const now = Date.now();
+    const target = enemies.reduce((a, b) =>
+      Phaser.Math.Distance.Between(p3.x, p3.y, a.x, a.y) <
+      Phaser.Math.Distance.Between(p3.x, p3.y, b.x, b.y) ? a : b
+    );
+    const dist = Phaser.Math.Distance.Between(p3.x, p3.y, target.x, target.y);
+    const hasLOS = !this.lineBlockedByWall(p3.x, p3.y, target.x, target.y);
+
+    // Use all weapons (including playerOnly, skip minigun auto — handled in update)
+    let bestW = -1;
+    WEAPONS.forEach((w, i) => {
+      if (w.minigun) return;
+      if (w.noLOS && dist <= w.range) { if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return; }
+      if (p3.cooldowns[i] <= now && dist <= w.range && hasLOS)
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+    });
+
+    if (bestW >= 0) {
+      this.attackRobot(p3, target, bestW);
+      return;
+    }
+
+    this.moveToward(p3, target.x, target.y, 100);
   }
 
   // Move robot toward (tx,ty), trying alternative angles if direct path is walled
