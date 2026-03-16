@@ -329,13 +329,21 @@ class GameScene extends Phaser.Scene {
     // Map 2 tank
     robots.push(makeRobot(2150, 450, false, 3, true));
 
-    // Orange robot — honey grenade (dual rocket), attacks everyone non-orange
+    // Orange robots — honey grenade (dual rocket), attacks everyone non-orange
     const or1 = makeRobot(400, 720, false, 14);
     or1.isOrange = true;
     or1.sprite.setTexture('orange-robot');
     or1.label.setText('O1');
     or1.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(or1);
+
+    // Second orange robot — map 2
+    const or2 = makeRobot(1900, 680, false, 20);
+    or2.isOrange = true;
+    or2.sprite.setTexture('orange-robot');
+    or2.label.setText('O2');
+    or2.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(or2);
 
 
     // Green team — laser only, fight red enemies
@@ -1097,25 +1105,27 @@ class GameScene extends Phaser.Scene {
   // Orange robot AI — honey grenade (dual rocket), attacks everyone non-orange
   orangeTurn() {
     if (gameOver) return;
-    const orange = this.robots.find(r => r.isOrange && r.hp > 0 && !r.respawning);
-    if (!orange) return;
-    const targets = this.robots.filter(r =>
-      !r.isOrange && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
-    );
-    if (!targets.length) return;
+    const oranges = this.robots.filter(r => r.isOrange && r.hp > 0 && !r.respawning);
+    if (!oranges.length) return;
     const now = Date.now();
-    const honey = WEAPONS[7];
-    const target = targets.reduce((a, b) =>
-      Phaser.Math.Distance.Between(orange.x, orange.y, a.x, a.y) <
-      Phaser.Math.Distance.Between(orange.x, orange.y, b.x, b.y) ? a : b
-    );
-    const dist = Phaser.Math.Distance.Between(orange.x, orange.y, target.x, target.y);
-    if ((orange.cooldowns[7] || 0) <= now && dist <= honey.range &&
-        !this.lineBlockedByWall(orange.x, orange.y, target.x, target.y)) {
-      this.attackRobot(orange, target, 7);
-      return;
-    }
-    this.moveToward(orange, target.x, target.y, 85);
+    const honey = WEAPONS[6];
+    oranges.forEach(orange => {
+      const targets = this.robots.filter(r =>
+        !r.isOrange && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+      );
+      if (!targets.length) return;
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(orange.x, orange.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(orange.x, orange.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(orange.x, orange.y, target.x, target.y);
+      if ((orange.cooldowns[6] || 0) <= now && dist <= honey.range &&
+          !this.lineBlockedByWall(orange.x, orange.y, target.x, target.y)) {
+        this.attackRobot(orange, target, 6);
+        return;
+      }
+      this.moveToward(orange, target.x, target.y, 85);
+    });
   }
 
   // Green team AI — laser only, attack red enemies
