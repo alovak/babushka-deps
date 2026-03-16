@@ -270,13 +270,15 @@ class GameScene extends Phaser.Scene {
       makeRobot(650,  110, false, 6),        // Extra red 4
     ];
 
-    // Yellow robot — minigun only, independent (attacks everyone non-yellow)
-    const yr = makeRobot(560, 460, false, 11);
-    yr.isYellow = true;
-    yr.sprite.setTexture('yellow-robot');
-    yr.label.setText('Y1');
-    yr.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
-    robots.push(yr);
+    // Yellow robots — minigun only, independent (attacks everyone non-yellow)
+    [[560, 460, 'Y1'], [200, 180, 'Y2'], [1000, 650, 'Y3']].forEach(([x, y, lbl], i) => {
+      const yr = makeRobot(x, y, false, 11 + i);
+      yr.isYellow = true;
+      yr.sprite.setTexture('yellow-robot');
+      yr.label.setText(lbl);
+      yr.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(yr);
+    });
 
     // Green team — laser only, fight red enemies
     [[430, 80], [750, 310], [320, 330], [860, 460]].forEach(([x, y], i) => {
@@ -1005,28 +1007,29 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  // Yellow robot AI — minigun only, attacks everyone non-yellow
+  // Yellow robots AI — minigun only, attacks everyone non-yellow
   yellowTurn() {
     if (gameOver) return;
-    const yellow = this.robots.find(r => r.isYellow && r.hp > 0 && !r.respawning);
-    if (!yellow) return;
+    const yellows = this.robots.filter(r => r.isYellow && r.hp > 0 && !r.respawning);
     const targets = this.robots.filter(r =>
       !r.isYellow && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
     );
-    if (!targets.length) return;
+    if (!yellows.length || !targets.length) return;
     const now = Date.now();
-    const target = targets.reduce((a, b) =>
-      Phaser.Math.Distance.Between(yellow.x, yellow.y, a.x, a.y) <
-      Phaser.Math.Distance.Between(yellow.x, yellow.y, b.x, b.y) ? a : b
-    );
-    const dist = Phaser.Math.Distance.Between(yellow.x, yellow.y, target.x, target.y);
     const mg = WEAPONS[4];
-    if ((yellow.cooldowns[4] || 0) <= now && dist <= mg.range &&
-        !this.lineBlockedByWall(yellow.x, yellow.y, target.x, target.y)) {
-      this.attackRobot(yellow, target, 4);
-      return;
-    }
-    this.moveToward(yellow, target.x, target.y, 90);
+    yellows.forEach(yellow => {
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(yellow.x, yellow.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(yellow.x, yellow.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(yellow.x, yellow.y, target.x, target.y);
+      if ((yellow.cooldowns[4] || 0) <= now && dist <= mg.range &&
+          !this.lineBlockedByWall(yellow.x, yellow.y, target.x, target.y)) {
+        this.attackRobot(yellow, target, 4);
+        return;
+      }
+      this.moveToward(yellow, target.x, target.y, 90);
+    });
   }
 
   // Green team AI — laser only, attack red enemies
