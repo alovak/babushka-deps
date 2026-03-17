@@ -132,11 +132,45 @@ const WALLS = [
   { x: 880,  y: -540, w: 40,  h: 200 },
   { x: 1000, y: -420, w: 160, h: 40  },
 
-  // ── Map separator: vertical wall with two corridor gaps ─────────────────
+  // ── Map 1/2 separator: vertical wall with two corridor gaps ──────────────
   // Corridor 1: y=210-340, Corridor 2: y=510-640
   { x: 1160, y: 0,   w: 280, h: 210 },  // top block
   { x: 1160, y: 340, w: 280, h: 170 },  // middle block
   { x: 1160, y: 640, w: 280, h: 210 },  // bottom block
+
+  // ── Map 3/4 separator: vertical wall with two corridor gaps ──────────────
+  // Corridor 1: y=-700 to -570, Corridor 2: y=-300 to -170
+  { x: 1160, y: -900, w: 280, h: 200 },  // top block    (-900 to -700)
+  { x: 1160, y: -570, w: 280, h: 270 },  // middle block (-570 to -300)
+  { x: 1160, y: -170, w: 280, h: 170 },  // bottom block (-170 to 0)
+
+  // ── Map 2/4 separator: horizontal wall with two corridor gaps ────────────
+  // Corridors at x=1640-1780 and x=2240-2380
+  { x: 1440, y: -22, w: 200, h: 44 },   // left block
+  { x: 1780, y: -22, w: 460, h: 44 },   // center block
+  { x: 2380, y: -22, w: 220, h: 44 },   // right block
+
+  // ── Map 4 obstacles (x:1440-2600, y:-900 to 0) ───────────────────────────
+  // Upper-left cluster
+  { x: 1540, y: -820, w: 40,  h: 200 },
+  { x: 1540, y: -820, w: 200, h: 40  },
+  // Upper-center tower
+  { x: 1880, y: -760, w: 200, h: 40  },
+  { x: 1880, y: -760, w: 40,  h: 200 },
+  // Upper-right fortress
+  { x: 2220, y: -820, w: 200, h: 40  },
+  { x: 2220, y: -820, w: 40,  h: 200 },
+  { x: 2500, y: -760, w: 40,  h: 180 },
+  // Mid-left
+  { x: 1640, y: -540, w: 200, h: 40  },
+  { x: 1800, y: -540, w: 40,  h: 200 },
+  // Mid-center passage
+  { x: 1960, y: -480, w: 40,  h: 200 },
+  { x: 1920, y: -480, w: 120, h: 40  },
+  // Mid-right
+  { x: 2160, y: -540, w: 200, h: 40  },
+  { x: 2320, y: -540, w: 40,  h: 200 },
+  { x: 2440, y: -420, w: 160, h: 40  },
 
   // ── Map 2 obstacles ──────────────────────────────────────────────────────
   // Upper-left cluster
@@ -396,6 +430,32 @@ class GameScene extends Phaser.Scene {
     robots.push(makeRobot(850,  -380, false, 25));
     // Map 3 tank
     robots.push(makeRobot(580,  -820, false, 4, true));
+
+    // ── Map 4 enemies (above map 2, x:1440-2600, negative y) ──────────────
+    robots.push(makeRobot(1600, -700, false, 36));
+    robots.push(makeRobot(2000, -800, false, 37));
+    robots.push(makeRobot(2150, -650, false, 38));
+    robots.push(makeRobot(2420, -700, false, 39));
+    robots.push(makeRobot(2550, -300, false, 40));
+    // Map 4 tank
+    robots.push(makeRobot(1850, -420, false, 5, true));
+    // Map 4 green robots
+    [[1700, -350, 'G5'], [2300, -400, 'G6']].forEach(([x, y, lbl], i) => {
+      const gr = makeRobot(x, y, false, 11 + i);
+      gr.isGreen = true;
+      gr.sprite.setTexture('green-robot');
+      gr.label.setText(lbl);
+      gr.label.setStyle({ color: '#88ff88', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(gr);
+    });
+    // Map 4 shotgun bot
+    const s2 = makeRobot(2100, -750, false, 6);
+    s2.isShotgunBot = true;
+    s2.shotgunOnly = true;
+    s2.sprite.setTexture('shotgun-robot');
+    s2.label.setText('S2');
+    s2.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(s2);
 
     // ── Combat vehicles: dual laser ───────────────────────────────────────
     // Enemy vehicles (V1-V10): attack everyone except fellow enemy vehicles
@@ -1187,10 +1247,9 @@ class GameScene extends Phaser.Scene {
       });
     } else {
       this.time.delayedCall(500, () => {
-        // Victory when no red, green, or purple (shotgun bots) remain
+        // Victory when only blue team remains (all non-blue robots defeated)
         const enemiesAlive = this.robots.filter(r =>
-          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isOrange &&
-          !r.isTank && !r.isPlane && !r.isHelicopter && !r.isAllyVehicle
+          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isAllyVehicle
         ).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
@@ -1334,19 +1393,9 @@ class GameScene extends Phaser.Scene {
       if ((vehicle.cooldowns[0] || 0) <= now && dist <= laser.range &&
           !this.lineBlockedByWall(vehicle.x, vehicle.y, target.x, target.y)) {
         this.attackRobot(vehicle, target, 0);
-        this.time.delayedCall(120, () => {
-          if (gameOver || target.hp <= 0) return;
-          const dmg2 = Math.round(laser.dmg * (0.85 + Math.random() * 0.3));
-          target.hp = Math.max(0, target.hp - dmg2);
-          this.drawHpBar(target);
-          this.showShotEffect(vehicle, target, laserColor);
-          this.showDmgNumber(target.x, target.y, dmg2, laserColor);
-          this.updateStatus(`${vehicle.label.text} — второй лазер → ${target.label.text}: -${dmg2} HP`);
-          if (target.hp <= 0) this.killRobot(target);
-        });
         return;
       }
-      this.moveToward(vehicle, target.x, target.y, 55);
+      this.moveToward(vehicle, target.x, target.y, 40);
     });
   }
 
