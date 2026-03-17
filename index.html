@@ -476,6 +476,21 @@ class GameScene extends Phaser.Scene {
     or2.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(or2);
 
+    // Extra orange robots (O3–O6)
+    [
+      { x: 720,  y: 200,  id: 26 },   // map 1 — right top
+      { x: 550,  y: -500, id: 27 },   // map 3 — mid
+      { x: 2300, y: 200,  id: 28 },   // map 2 — top
+      { x: 200,  y: -750, id: 29 },   // map 3 — far left
+    ].forEach(({ x, y, id }, i) => {
+      const or = makeRobot(x, y, false, id);
+      or.isOrange = true;
+      or.sprite.setTexture('orange-robot');
+      or.label.setText(`O${i + 3}`);
+      or.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(or);
+    });
+
 
     // Green team — laser only, fight red enemies
     [[430, 80], [750, 310], [320, 330], [860, 460]].forEach(([x, y], i) => {
