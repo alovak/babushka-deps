@@ -780,27 +780,6 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    // ── P2 and P3 minigun auto-fire ───────────────────────────────────────
-    if (!gameOver) {
-      const mg = WEAPONS[4];
-      [1, 2].forEach(pid => {
-        const ally = this.robots.find(r => r.isPlayer && r.id === pid && r.hp > 0 && !r.respawning);
-        if (!ally) return;
-        const targets = this.robots.filter(r =>
-          !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
-        );
-        if (!targets.length) return;
-        const nearest = targets.reduce((best, r) => {
-          const d = Phaser.Math.Distance.Between(ally.x, ally.y, r.x, r.y);
-          return (!best || d < best.d) ? { r, d } : best;
-        }, null);
-        if (nearest && nearest.d <= mg.range && (ally.cooldowns[4] || 0) <= now &&
-            !this.lineBlockedByWall(ally.x, ally.y, nearest.r.x, nearest.r.y)) {
-          this.attackRobot(ally, nearest.r, 4);
-        }
-      });
-    }
-
     // ── Yellow drones: fly freely, minigun ────────────────────────────────
     if (!gameOver) {
       const mg = WEAPONS[4];
@@ -1433,6 +1412,7 @@ class GameScene extends Phaser.Scene {
             !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
           )
         : this.robots.filter(r =>
+            !r.isPlayer && !r.isAllyVehicle &&
             !(r.isCombatVehicle && !r.isAllyVehicle) &&
             !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
           );
@@ -1446,6 +1426,8 @@ class GameScene extends Phaser.Scene {
       // Ally vehicles use minigun (wIdx=4), enemy vehicles use laser (wIdx=0)
       const wIdx = vehicle.isAllyVehicle ? 4 : 0;
       const w = WEAPONS[wIdx];
+      // Hard safety: ally vehicles never shoot blue team
+      if (vehicle.isAllyVehicle && (target.isPlayer || target.isAllyVehicle)) return;
       if ((vehicle.cooldowns[wIdx] || 0) <= now && dist <= w.range &&
           !this.lineBlockedByWall(vehicle.x, vehicle.y, target.x, target.y)) {
         this.attackRobot(vehicle, target, wIdx);
@@ -1530,10 +1512,10 @@ class GameScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(companion.x, companion.y, target.x, target.y);
 
     const hasLOS = !this.lineBlockedByWall(companion.x, companion.y, target.x, target.y);
-    // Full arsenal — skip minigun (handled in update) and vehicle deploy
+    // Full arsenal — skip vehicle deploy only; minigun used as fallback
     let bestW = -1;
     WEAPONS.forEach((w, i) => {
-      if (w.minigun || w.vehicleWeapon) return;
+      if (w.vehicleWeapon) return;
       if (w.noLOS && (companion.cooldowns[i] || 0) <= now && dist <= w.range) {
         if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return;
       }
@@ -1565,10 +1547,10 @@ class GameScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(p3.x, p3.y, target.x, target.y);
     const hasLOS = !this.lineBlockedByWall(p3.x, p3.y, target.x, target.y);
 
-    // Use all weapons (including playerOnly, skip minigun auto — handled in update)
+    // Use all weapons including minigun — skip vehicle deploy only
     let bestW = -1;
     WEAPONS.forEach((w, i) => {
-      if (w.minigun || w.vehicleWeapon) return;
+      if (w.vehicleWeapon) return;
       if (w.noLOS && (p3.cooldowns[i] || 0) <= now && dist <= w.range) {
         if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return;
       }
