@@ -586,13 +586,14 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1500, callback: this.vehicleTurn, callbackScope: this, loop: true });
 
 
-    // Setup weapon menu buttons
+    // Setup weapon menu buttons — display order: Миниган, Мёд, Граната, Дрон, Лазер, Ракета, Дробовик
+    const WEAPON_DISPLAY_ORDER = [4, 6, 3, 5, 0, 1, 2];
     document.getElementById('w7').onclick = () => this.hideWeaponMenu();
-    [0, 1, 2, 3, 4, 5, 6].forEach(i => {
-      const btn = document.getElementById('w' + i);
+    WEAPON_DISPLAY_ORDER.forEach((weaponIdx, slotIdx) => {
+      const btn = document.getElementById('w' + slotIdx);
       btn.ontouchstart = btn.onclick = (e) => {
         e.stopPropagation();
-        if (!btn.disabled) this.selectWeapon(i);
+        if (!btn.disabled) this.selectWeapon(weaponIdx);
       };
     });
 
@@ -908,9 +909,9 @@ class GameScene extends Phaser.Scene {
   showWeaponMenu(px, py, robot) {
     const menu = document.getElementById('weapon-menu');
     const now = Date.now();
-    WEAPONS.forEach((w, i) => {
-      if (w.aiOnly) return;
-      const btn = document.getElementById('w' + i);
+    [4, 6, 3, 5, 0, 1, 2].forEach((i, slotIdx) => {
+      const w = WEAPONS[i];
+      const btn = document.getElementById('w' + slotIdx);
       const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
       if (w.droneWeapon) {
         const inBattle = deployedDrone && deployedDrone.hp > 0;
