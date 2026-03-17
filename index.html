@@ -61,7 +61,7 @@ const WEAPONS = [
   { name: '💥 Дробовик', dmg: 30,  cd: 2000, range: 150, color: 0xffff00, enemyColor: 0xff4400, desc: 'Средне / близко' },
   { name: '💣 Граната',  dmg: 999, cd: 7000, range: 280, color: 0x44ff44, desc: 'Через стены / убивает', noLOS: true, playerOnly: true },
   { name: '🔥 Миниган',  dmg: 8,   cd: 60,   range: 260, color: 0xff4400, enemyColor: 0xff4400, desc: '1000 пуль/мин · авто', playerOnly: true, minigun: true },
-  { name: '🚁 Дрон',    dmg: 0,   cd: 0,    range: 0,   color: 0x44ddff, desc: 'Выпустить дрон с миниганом', playerOnly: true, droneWeapon: true },
+  { name: '🚗 Машина',  dmg: 0,   cd: 0,    range: 0,   color: 0x4488ff, desc: 'Выпустить союзную машину', playerOnly: true, vehicleWeapon: true },
   { name: '🍯 Мёд',    dmg: 45,  cd: 2000, range: 280, color: 0xff8800, enemyColor: 0xff8800, desc: 'Двойная ракета · 2с', dualRocket: true, playerOnly: true },
 ];
 
@@ -72,6 +72,7 @@ let robots = [];
 let gameOver = false;
 let lives = 5;
 let deployedDrone = null;
+let deployedVehicleCount = 0;
 
 // ── OBSTACLE LAYOUT ─────────────────────────────────────────────────────────
 const WALLS = [
@@ -663,7 +664,13 @@ class GameScene extends Phaser.Scene {
       const btn = document.getElementById('w' + slotIdx);
       btn.ontouchstart = btn.onclick = (e) => {
         e.stopPropagation();
-        if (!btn.disabled) this.selectWeapon(weaponIdx);
+        if (btn.disabled) return;
+        if (WEAPONS[weaponIdx].vehicleWeapon) {
+          // Deploy vehicle immediately, keep menu open for more taps
+          this.deployVehicle();
+        } else {
+          this.selectWeapon(weaponIdx);
+        }
       };
     });
 
@@ -983,11 +990,10 @@ class GameScene extends Phaser.Scene {
       const w = WEAPONS[i];
       const btn = document.getElementById('w' + slotIdx);
       const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
-      if (w.droneWeapon) {
-        const inBattle = deployedDrone && deployedDrone.hp > 0;
-        btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc}</small>` +
-          (inBattle ? `<span class="cooldown">в бою</span>` : '');
-        btn.disabled = !!inBattle;
+      if (w.vehicleWeapon) {
+        btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc}` +
+          (deployedVehicleCount > 0 ? ` · развёрнуто: ${deployedVehicleCount}` : '') + `</small>`;
+        btn.disabled = false;
         return;
       }
       const cdLeft = Math.max(0, (robot.cooldowns[i] || 0) - now);
@@ -1014,16 +1020,37 @@ class GameScene extends Phaser.Scene {
 
   selectWeapon(idx) {
     this.hideWeaponMenu();
-    if (WEAPONS[idx].droneWeapon) {
-      if (deployedDrone && deployedDrone.hp > 0) {
-        this.updateStatus('Дрон уже в бою! Подожди пока его не уничтожат.');
-        return;
-      }
-      this.deployDrone();
-      return;
-    }
     armedWeapon = idx;
     this.updateStatus(`${WEAPONS[idx].name} готово — тапни на врага для атаки`);
+  }
+
+  deployVehicle() {
+    if (!selectedRobot || selectedRobot.hp <= 0) return;
+    // Try spawning at a non-wall position near the selected robot
+    let vx, vy;
+    const offsets = [[50, 0], [-50, 0], [0, 50], [0, -50], [50, 50], [-50, -50], [60, -60], [-60, 60]];
+    for (const [dx, dy] of offsets) {
+      const cx = selectedRobot.x + dx, cy = selectedRobot.y + dy;
+      if (!this.isWall(cx, cy)) { vx = cx; vy = cy; break; }
+    }
+    if (vx === undefined) { this.updateStatus('Нет места для машины рядом!'); return; }
+    deployedVehicleCount++;
+    const av = {
+      id: 60 + deployedVehicleCount, isPlayer: false, isTank: false,
+      isCombatVehicle: true, isAllyVehicle: true,
+      x: vx, y: vy, spawnX: vx, spawnY: vy,
+      hp: 70, maxHp: 70, respawning: false,
+      cooldowns: [0, 0, 0, 0, 0, 0, 0],
+      sprite: this.add.image(vx, vy, 'combat-vehicle').setOrigin(0.5).setTint(0x3366dd),
+      selectionRing: this.add.graphics(),
+      hpBar: this.add.graphics(),
+      cdBar: this.add.graphics(),
+      label: this.add.text(vx, vy + 30, `DV${deployedVehicleCount}`,
+        { fontSize: '10px', color: '#4499ff', fontFamily: 'monospace' }).setOrigin(0.5),
+    };
+    robots.push(av);
+    this.drawHpBar(av);
+    this.updateStatus(`🚗 Машина DV${deployedVehicleCount} развёрнута!`);
   }
 
   deployDrone() {
@@ -1399,11 +1426,12 @@ class GameScene extends Phaser.Scene {
       );
       const dist = Phaser.Math.Distance.Between(vehicle.x, vehicle.y, target.x, target.y);
       vehicle.sprite.setRotation(Math.atan2(target.y - vehicle.y, target.x - vehicle.x));
-      const laser = WEAPONS[0];
-      const laserColor = vehicle.isAllyVehicle ? 0x4488ff : 0xaaff44;
-      if ((vehicle.cooldowns[0] || 0) <= now && dist <= laser.range &&
+      // Ally vehicles use minigun (wIdx=4), enemy vehicles use laser (wIdx=0)
+      const wIdx = vehicle.isAllyVehicle ? 4 : 0;
+      const w = WEAPONS[wIdx];
+      if ((vehicle.cooldowns[wIdx] || 0) <= now && dist <= w.range &&
           !this.lineBlockedByWall(vehicle.x, vehicle.y, target.x, target.y)) {
-        this.attackRobot(vehicle, target, 0);
+        this.attackRobot(vehicle, target, wIdx);
         return;
       }
       this.moveToward(vehicle, target.x, target.y, 40);
