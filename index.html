@@ -470,6 +470,11 @@ class GameScene extends Phaser.Scene {
       { x: 2400, y: 640  },   // map 2
       { x: 300,  y: -730 },   // map 3
       { x: 1000, y: -500 },   // map 3
+      { x: 350,  y: 200  },   // map 1 (V11)
+      { x: 2200, y: 450  },   // map 2 (V12)
+      { x: 1700, y: -700 },   // map 4 (V13)
+      { x: 2050, y: -500 },   // map 4 (V14)
+      { x: 2400, y: -300 },   // map 4 (V15)
     ].forEach(({ x, y }, i) => {
       const cv = {
         id: 40 + i, isPlayer: false, isTank: false, isCombatVehicle: true,
@@ -494,6 +499,11 @@ class GameScene extends Phaser.Scene {
       { x: 1600, y: 640  },   // map 2
       { x: 250,  y: -300 },   // map 3
       { x: 850,  y: -760 },   // map 3
+      { x: 1500, y: -500 },   // map 4 (AV6)
+      { x: 2100, y: -350 },   // map 4 (AV7)
+      { x: 650,  y: -600 },   // map 3 (AV8)
+      { x: 1000, y: -300 },   // map 3 (AV9)
+      { x: 2500, y: 420  },   // map 2 (AV10)
     ].forEach(({ x, y }, i) => {
       const av = {
         id: 50 + i, isPlayer: false, isTank: false, isCombatVehicle: true, isAllyVehicle: true,
@@ -1247,9 +1257,10 @@ class GameScene extends Phaser.Scene {
       });
     } else {
       this.time.delayedCall(500, () => {
-        // Victory when only blue team remains (all non-blue robots defeated)
+        // Victory when all enemy robots defeated (tanks, helis, planes, drones don't count)
         const enemiesAlive = this.robots.filter(r =>
-          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isAllyVehicle
+          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isAllyVehicle &&
+          !r.isTank && !r.isHelicopter && !r.isPlane && !r.isYellowDrone
         ).length;
         if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
       });
