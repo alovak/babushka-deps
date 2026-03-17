@@ -780,6 +780,27 @@ class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── P2 and P3 minigun auto-fire ───────────────────────────────────────
+    if (!gameOver) {
+      const mg = WEAPONS[4];
+      [1, 2].forEach(pid => {
+        const ally = this.robots.find(r => r.isPlayer && r.id === pid && r.hp > 0 && !r.respawning);
+        if (!ally) return;
+        const targets = this.robots.filter(r =>
+          !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+        );
+        if (!targets.length) return;
+        const nearest = targets.reduce((best, r) => {
+          const d = Phaser.Math.Distance.Between(ally.x, ally.y, r.x, r.y);
+          return (!best || d < best.d) ? { r, d } : best;
+        }, null);
+        if (nearest && nearest.d <= mg.range && (ally.cooldowns[4] || 0) <= now &&
+            !this.lineBlockedByWall(ally.x, ally.y, nearest.r.x, nearest.r.y)) {
+          this.attackRobot(ally, nearest.r, 4);
+        }
+      });
+    }
+
     // ── Yellow drones: fly freely, minigun ────────────────────────────────
     if (!gameOver) {
       const mg = WEAPONS[4];
@@ -1509,14 +1530,16 @@ class GameScene extends Phaser.Scene {
     );
     const dist = Phaser.Math.Distance.Between(companion.x, companion.y, target.x, target.y);
 
-    // Try to shoot: pick best weapon in range with clear line of sight (no playerOnly weapons)
+    const hasLOS = !this.lineBlockedByWall(companion.x, companion.y, target.x, target.y);
+    // Full arsenal — skip minigun (handled in update) and vehicle deploy
     let bestW = -1;
     WEAPONS.forEach((w, i) => {
-      if (w.playerOnly) return;
-      if (companion.cooldowns[i] <= now && dist <= w.range &&
-          !this.lineBlockedByWall(companion.x, companion.y, target.x, target.y)) {
-        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+      if (w.minigun || w.vehicleWeapon) return;
+      if (w.noLOS && (companion.cooldowns[i] || 0) <= now && dist <= w.range) {
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return;
       }
+      if ((companion.cooldowns[i] || 0) <= now && dist <= w.range && hasLOS)
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
     });
 
     if (bestW >= 0) {
@@ -1524,8 +1547,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Can't shoot — move closer
-    this.moveToward(companion, target.x, target.y, 100);
+    this.moveToward(companion, target.x, target.y, 115);
   }
 
   // P3 AI — full arsenal including playerOnly weapons
@@ -1547,9 +1569,11 @@ class GameScene extends Phaser.Scene {
     // Use all weapons (including playerOnly, skip minigun auto — handled in update)
     let bestW = -1;
     WEAPONS.forEach((w, i) => {
-      if (w.minigun || w.droneWeapon) return;
-      if (w.noLOS && dist <= w.range) { if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return; }
-      if (p3.cooldowns[i] <= now && dist <= w.range && hasLOS)
+      if (w.minigun || w.vehicleWeapon) return;
+      if (w.noLOS && (p3.cooldowns[i] || 0) <= now && dist <= w.range) {
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return;
+      }
+      if ((p3.cooldowns[i] || 0) <= now && dist <= w.range && hasLOS)
         if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
     });
 
@@ -1558,7 +1582,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.moveToward(p3, target.x, target.y, 100);
+    this.moveToward(p3, target.x, target.y, 115);
   }
 
   // Move robot toward (tx,ty), trying alternative angles if direct path is walled
