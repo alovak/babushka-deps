@@ -769,7 +769,7 @@ class GameScene extends Phaser.Scene {
     if (!gameOver && armedWeapon === 4 && selectedRobot && selectedRobot.hp > 0) {
       const mg = WEAPONS[4];
       const enemies = this.robots.filter(r =>
-        !r.isPlayer && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+        !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
       );
       const nearest = enemies.reduce((best, r) => {
         const d = Phaser.Math.Distance.Between(selectedRobot.x, selectedRobot.y, r.x, r.y);
@@ -1429,8 +1429,7 @@ class GameScene extends Phaser.Scene {
     vehicles.forEach(vehicle => {
       const targets = vehicle.isAllyVehicle
         ? this.robots.filter(r =>
-            !r.isPlayer && !r.isDeployDrone &&
-            !(r.isCombatVehicle && r.isAllyVehicle) &&
+            !r.isPlayer && !r.isAllyVehicle &&
             !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
           )
         : this.robots.filter(r =>
@@ -1587,6 +1586,8 @@ class GameScene extends Phaser.Scene {
 
   // Move robot toward (tx,ty), trying alternative angles if direct path is walled
   moveToward(robot, tx, ty, moveD) {
+    // Skip if sprite is already mid-tween to avoid tween pile-up (prevents freeze)
+    if (this.tweens.isTweening(robot.sprite)) return;
     const base = Math.atan2(ty - robot.y, tx - robot.x);
     for (const da of [0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35]) {
       const a = base + da;
