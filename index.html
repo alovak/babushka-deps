@@ -749,14 +749,11 @@ class GameScene extends Phaser.Scene {
           const d = Phaser.Math.Distance.Between(deployedDrone.x, deployedDrone.y, r.x, r.y);
           return (!best || d < best.d) ? { r, d } : best;
         }, null);
-        // Fly toward target
+        // Fly toward target (drone ignores walls)
         const angle = Math.atan2(nearest.r.y - deployedDrone.y, nearest.r.x - deployedDrone.x);
         const step = deployedDrone.speed * dt;
-        const newX = deployedDrone.x + Math.cos(angle) * step;
-        const newY = deployedDrone.y + Math.sin(angle) * step;
-        if (!this.isWall(newX, newY)) {
-          deployedDrone.x = newX; deployedDrone.y = newY;
-        }
+        deployedDrone.x += Math.cos(angle) * step;
+        deployedDrone.y += Math.sin(angle) * step;
         deployedDrone.sprite.setPosition(deployedDrone.x, deployedDrone.y);
         deployedDrone.sprite.setRotation(angle + Math.PI / 2);
         deployedDrone.label.setPosition(deployedDrone.x, deployedDrone.y + 24);
