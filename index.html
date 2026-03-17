@@ -628,7 +628,7 @@ class GameScene extends Phaser.Scene {
       if (this.didHold) return;
 
       const tapped = this.robotAt(ptr.worldX, ptr.worldY);
-      if (tapped && !tapped.isPlayer) {
+      if (tapped && !tapped.isPlayer && !tapped.isAllyVehicle) {
         this.doAttack(selectedRobot, tapped);
       } else if (!tapped || tapped.isPlayer) {
         this.moveRobot(selectedRobot, ptr.worldX, ptr.worldY);
@@ -1498,7 +1498,7 @@ class GameScene extends Phaser.Scene {
     if (gameOver) return;
     const companion = this.robots.find(r => r.isPlayer && r.id === 1 && r.hp > 0 && !r.respawning);
     if (!companion) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && !r.isPlane && !r.isHelicopter && r.hp > 0);
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0);
     if (!enemies.length) return;
 
     const now = Date.now();
@@ -1533,7 +1533,7 @@ class GameScene extends Phaser.Scene {
     if (gameOver) return;
     const p3 = this.robots.find(r => r.isPlayer && r.id === 2 && r.hp > 0 && !r.respawning);
     if (!p3) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && !r.isPlane && !r.isHelicopter && r.hp > 0);
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0);
     if (!enemies.length) return;
 
     const now = Date.now();
