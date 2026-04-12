@@ -43,7 +43,8 @@
     <button class="weapon-btn" id="w4"></button>
     <button class="weapon-btn" id="w5"></button>
     <button class="weapon-btn" id="w6"></button>
-    <button class="weapon-btn" id="w7" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+    <button class="weapon-btn" id="w7"></button>
+    <button class="weapon-btn" id="w8" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
   </div>
 </div>
 
@@ -54,6 +55,9 @@ const W = 1200, H = 850;
 const MAP3_H = 900;                      // map 3 zone above map 1 (negative y)
 const WORLD_W = 2600, WORLD_H = H;
 const TILE = 40;
+const FLOOR2_Y      = 980;               // верх комнаты 2-го этажа
+const FLOOR2_H      = 290;               // высота комнаты
+const FLOOR2_BOTTOM = FLOOR2_Y + FLOOR2_H; // = 1270
 
 const WEAPONS = [
   { name: '⚡ Лазер',    dmg: 15,  cd: 1000, range: 300, color: 0x00ffff, enemyColor: 0xff2222, desc: 'Быстро / слабый' },
@@ -63,6 +67,7 @@ const WEAPONS = [
   { name: '🔥 Миниган',  dmg: 8,   cd: 60,   range: 260, color: 0xff4400, enemyColor: 0xff4400, desc: '1000 пуль/мин · авто', playerOnly: true, minigun: true },
   { name: '🚗 Машина',  dmg: 0,   cd: 0,    range: 0,   color: 0x4488ff, desc: 'Выпустить союзную машину', playerOnly: true, vehicleWeapon: true },
   { name: '🍯 Мёд',    dmg: 45,  cd: 2000, range: 280, color: 0xff8800, enemyColor: 0xff8800, desc: 'Двойная ракета · 2с', dualRocket: true, playerOnly: true },
+  { name: '🔫 АК-47',  dmg: 12,  cd: 200,  range: 260, color: 0xffaa00, desc: '300 пуль/мин · авто', playerOnly: true, autofire: true },
 ];
 
 // ── GAME STATE ──────────────────────────────────────────────────────────────
@@ -73,6 +78,8 @@ let gameOver = false;
 let lives = 5;
 let deployedDrone = null;
 let deployedVehicleCount = 0;
+let playerHasAK47 = false;
+let floor2Boxes = [];
 
 // ── OBSTACLE LAYOUT ─────────────────────────────────────────────────────────
 const WALLS = [
@@ -172,6 +179,12 @@ const WALLS = [
   { x: 2160, y: -540, w: 200, h: 40  },
   { x: 2320, y: -540, w: 40,  h: 200 },
   { x: 2440, y: -420, w: 160, h: 40  },
+
+  // ── Разделитель 1-го и 2-го этажа (полная ширина, y=920) ─────────────────
+  { x: 0,   y: 920, w: 2600, h: 40 },
+  // ── Стены комнаты 2-го этажа (x=0-520, y=980-1260) ────────────────────
+  { x: 490, y: 960, w: 40, h: 300 },   // правая стена
+  { x: 0,   y: 1250, w: 530, h: 40 }, // нижняя стена
 
   // ── Map 2 obstacles ──────────────────────────────────────────────────────
   // Upper-left cluster
@@ -372,7 +385,7 @@ class GameScene extends Phaser.Scene {
     const makeRobot = (x, y, isPlayer, id, isTank = false) => ({
       id, isPlayer, isTank, x, y, spawnX: x, spawnY: y,
       hp: isTank ? 38 : 100, maxHp: isTank ? 38 : 100, respawning: false,
-      cooldowns: [0, 0, 0, 0, 0, 0],
+      cooldowns: [0, 0, 0, 0, 0, 0, 0, 0],
       sprite: this.add.image(x, y,
         isTank ? 'tank' : (isPlayer ? 'player-robot' : 'enemy-robot')
       ).setOrigin(0.5),
@@ -598,11 +611,31 @@ class GameScene extends Phaser.Scene {
       if (this.holdTimer) { this.holdTimer.remove(); this.holdTimer = null; }
       if (this.didHold) return;
 
-      const tapped = this.robotAt(ptr.worldX, ptr.worldY);
+      const wx = ptr.worldX, wy = ptr.worldY;
+      const onFloor2 = selectedRobot && selectedRobot.y > 940;
+
+      // Лифт: 1й → 2й этаж
+      if (!onFloor2 && Phaser.Math.Distance.Between(wx, wy, 80, 870) < 55) {
+        this.teleportToFloor2(); return;
+      }
+      // Лифт: 2й → 1й этаж
+      if (onFloor2 && Phaser.Math.Distance.Between(wx, wy, 80, 1015) < 55) {
+        this.teleportToFloor1(); return;
+      }
+      // Коробки на 2м этаже
+      if (onFloor2) {
+        for (const box of floor2Boxes) {
+          if (!box.opened && Phaser.Math.Distance.Between(wx, wy, box.x, box.y) < 50) {
+            this.openBox(box); return;
+          }
+        }
+      }
+
+      const tapped = this.robotAt(wx, wy);
       if (tapped && !tapped.isPlayer && !tapped.isAllyVehicle) {
         this.doAttack(selectedRobot, tapped);
       } else if (!tapped || tapped.isPlayer) {
-        this.moveRobot(selectedRobot, ptr.worldX, ptr.worldY);
+        this.moveRobot(selectedRobot, wx, wy);
       }
     });
 
@@ -628,9 +661,9 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 1500, callback: this.vehicleTurn, callbackScope: this, loop: true });
 
 
-    // Setup weapon menu buttons — display order: Миниган, Мёд, Граната, Дрон, Лазер, Ракета, Дробовик
-    const WEAPON_DISPLAY_ORDER = [4, 6, 3, 5, 0, 1, 2];
-    document.getElementById('w7').onclick = () => this.hideWeaponMenu();
+    // Setup weapon menu buttons — display order: Миниган, АК-47, Мёд, Граната, Дрон, Лазер, Ракета, Дробовик
+    const WEAPON_DISPLAY_ORDER = [4, 7, 6, 3, 5, 0, 1, 2];
+    document.getElementById('w8').onclick = () => this.hideWeaponMenu();
     WEAPON_DISPLAY_ORDER.forEach((weaponIdx, slotIdx) => {
       const btn = document.getElementById('w' + slotIdx);
       btn.ontouchstart = btn.onclick = (e) => {
@@ -699,8 +732,11 @@ class GameScene extends Phaser.Scene {
       robots.push(plane);
     });
 
+    // ── Второй этаж: фон, лифт, коробки ──────────────────────────────────
+    this.setupFloor2();
+
     // ── Camera: follows selected robot, bounded to world ──────────────────
-    this.cameras.main.setBounds(0, -MAP3_H, WORLD_W, WORLD_H + MAP3_H);
+    this.cameras.main.setBounds(0, -MAP3_H, WORLD_W, WORLD_H + MAP3_H + FLOOR2_H + 130);
     this.cameras.main.startFollow(selectedRobot.sprite, true, 0.1, 0.1);
   }
 
@@ -748,6 +784,21 @@ class GameScene extends Phaser.Scene {
       }, null);
       if (nearest && nearest.d <= mg.range && selectedRobot.cooldowns[4] <= now) {
         this.attackRobot(selectedRobot, nearest.r, 4);
+      }
+    }
+
+    // ── АК-47 авто-огонь ──────────────────────────────────────────────────
+    if (!gameOver && armedWeapon === 7 && selectedRobot && selectedRobot.hp > 0) {
+      const ak = WEAPONS[7];
+      const enemies = this.robots.filter(r =>
+        !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+      );
+      const nearest = enemies.reduce((best, r) => {
+        const d = Phaser.Math.Distance.Between(selectedRobot.x, selectedRobot.y, r.x, r.y);
+        return (!best || d < best.d) ? { r, d } : best;
+      }, null);
+      if (nearest && nearest.d <= ak.range && (selectedRobot.cooldowns[7] || 0) <= now) {
+        this.attackRobot(selectedRobot, nearest.r, 7);
       }
     }
 
@@ -918,7 +969,7 @@ class GameScene extends Phaser.Scene {
   }
 
   clampToMap(x, y) {
-    return { x: Phaser.Math.Clamp(x, 25, WORLD_W - 25), y: Phaser.Math.Clamp(y, -MAP3_H + 25, WORLD_H - 25) };
+    return { x: Phaser.Math.Clamp(x, 25, WORLD_W - 25), y: Phaser.Math.Clamp(y, -MAP3_H + 25, FLOOR2_BOTTOM - 25) };
   }
 
   updateAllHpBars() {
@@ -954,9 +1005,15 @@ class GameScene extends Phaser.Scene {
   showWeaponMenu(px, py, robot) {
     const menu = document.getElementById('weapon-menu');
     const now = Date.now();
-    [4, 6, 3, 5, 0, 1, 2].forEach((i, slotIdx) => {
+    [4, 7, 6, 3, 5, 0, 1, 2].forEach((i, slotIdx) => {
       const w = WEAPONS[i];
       const btn = document.getElementById('w' + slotIdx);
+      // АК-47: заблокирован пока не найден на 2м этаже
+      if (i === 7 && !playerHasAK47) {
+        btn.innerHTML = `🔫 АК-47 🔒<br><small style="color:#aaa;font-size:12px">найди на 2м этаже</small>`;
+        btn.disabled = true;
+        return;
+      }
       const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
       if (w.vehicleWeapon) {
         btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc}` +
@@ -1707,6 +1764,104 @@ class GameScene extends Phaser.Scene {
         if (r.hp <= 0) this.killRobot(r);
       }
     });
+  }
+
+  // ── Второй этаж ──────────────────────────────────────────────────────────
+  setupFloor2() {
+    const Y = FLOOR2_Y, H2 = FLOOR2_H;
+
+    // Фон комнаты (тёмно-коричневый — отличается от основного)
+    const bg = this.add.graphics();
+    bg.fillStyle(0x120c06, 1);
+    bg.fillRect(0, Y - 20, 530, H2 + 40);
+    bg.lineStyle(1, 0x241408, 0.7);
+    for (let x = 0; x <= 530; x += TILE) bg.lineBetween(x, Y - 20, x, Y + H2 + 20);
+    for (let y = Y - 20; y <= Y + H2 + 20; y += TILE) bg.lineBetween(0, y, 530, y);
+
+    // Надпись
+    this.add.text(16, Y + 12, '2й ЭТАЖ', {
+      fontSize: '13px', color: '#aa7733', fontFamily: 'monospace', fontStyle: 'bold'
+    });
+
+    // Лифт на 1м этаже (внизу карты 1, около x=55-110, y=840-910)
+    const e1 = this.add.graphics();
+    e1.fillStyle(0x554400, 1);
+    e1.fillRect(55, 838, 52, 72);
+    e1.lineStyle(2, 0xffcc00, 1);
+    e1.strokeRect(55, 838, 52, 72);
+    e1.lineStyle(1, 0xffcc00, 0.6);
+    e1.lineBetween(81, 838, 81, 910);          // вертикальная линия — двери
+    e1.lineStyle(1, 0x887722, 0.5);
+    e1.lineBetween(55, 874, 107, 874);         // горизонтальная линия посередине
+    this.add.text(62, 845, '🛗',  { fontSize: '18px' });
+    this.add.text(62, 872, '2й▼', { fontSize: '9px',  color: '#ffdd00', fontFamily: 'monospace' });
+    this.add.text(62, 884, 'ЛИФТ', { fontSize: '8px', color: '#ffaa00', fontFamily: 'monospace' });
+
+    // Лифт на 2м этаже (сразу под разделителем, около y=988-1040)
+    const e2 = this.add.graphics();
+    e2.fillStyle(0x554400, 1);
+    e2.fillRect(55, Y - 2, 52, 58);
+    e2.lineStyle(2, 0xffcc00, 1);
+    e2.strokeRect(55, Y - 2, 52, 58);
+    e2.lineStyle(1, 0xffcc00, 0.6);
+    e2.lineBetween(81, Y - 2, 81, Y + 56);
+    this.add.text(62, Y + 4,  '🛗',  { fontSize: '18px' });
+    this.add.text(62, Y + 28, '1й▲', { fontSize: '9px',  color: '#ffdd00', fontFamily: 'monospace' });
+
+    // Коробки с АК-47
+    const positions = [
+      { x: 190, y: Y + 90  },
+      { x: 360, y: Y + 150 },
+      { x: 130, y: Y + 200 },
+    ];
+    floor2Boxes = positions.map(pos => {
+      const gfx = this.add.graphics();
+      // Ящик: коричневый прямоугольник с перекрестием
+      gfx.fillStyle(0x7a4820, 1);
+      gfx.fillRect(pos.x - 22, pos.y - 22, 44, 44);
+      gfx.lineStyle(2, 0xbb8844, 1);
+      gfx.strokeRect(pos.x - 22, pos.y - 22, 44, 44);
+      gfx.lineStyle(1, 0x996633, 0.6);
+      gfx.lineBetween(pos.x - 22, pos.y, pos.x + 22, pos.y);
+      gfx.lineBetween(pos.x, pos.y - 22, pos.x, pos.y + 22);
+      const lbl = this.add.text(pos.x, pos.y - 30, '📦 АК-47',
+        { fontSize: '10px', color: '#cc9944', fontFamily: 'monospace' }).setOrigin(0.5);
+      return { x: pos.x, y: pos.y, opened: false, gfx, lbl };
+    });
+  }
+
+  teleportToFloor2() {
+    if (!selectedRobot || selectedRobot.hp <= 0) return;
+    selectedRobot.x = 80; selectedRobot.y = 1050;
+    selectedRobot.sprite.setPosition(80, 1050);
+    selectedRobot.label.setPosition(80, 1074);
+    this.drawHpBar(selectedRobot);
+    this.drawSelectionRing(selectedRobot);
+    this.updateStatus('2й этаж — тапни на 📦 коробке для АК-47. Лифт — выход.');
+  }
+
+  teleportToFloor1() {
+    if (!selectedRobot || selectedRobot.hp <= 0) return;
+    selectedRobot.x = 80; selectedRobot.y = 860;
+    selectedRobot.sprite.setPosition(80, 860);
+    selectedRobot.label.setPosition(80, 884);
+    this.drawHpBar(selectedRobot);
+    this.drawSelectionRing(selectedRobot);
+    this.updateStatus('1й этаж');
+  }
+
+  openBox(box) {
+    box.opened = true;
+    // Рисуем открытый ящик (полупрозрачный)
+    box.gfx.clear();
+    box.gfx.fillStyle(0x4a2c0e, 0.45);
+    box.gfx.fillRect(box.x - 22, box.y - 22, 44, 44);
+    box.gfx.lineStyle(2, 0x775522, 0.5);
+    box.gfx.strokeRect(box.x - 22, box.y - 22, 44, 44);
+    box.lbl.setText('📦 ✓');
+    box.lbl.setStyle({ color: '#666633', fontFamily: 'monospace', fontSize: '10px' });
+    playerHasAK47 = true;
+    this.updateStatus('🔫 АК-47 получен! Удержи для выбора оружия → АК-47 в меню.');
   }
 
   updateStatus(msg) {
