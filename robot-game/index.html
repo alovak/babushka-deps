@@ -615,7 +615,7 @@ class GameScene extends Phaser.Scene {
       const onFloor2 = selectedRobot && selectedRobot.y > 940;
 
       // Лифт: 1й → 2й этаж
-      if (!onFloor2 && Phaser.Math.Distance.Between(wx, wy, 80, 870) < 55) {
+      if (!onFloor2 && Phaser.Math.Distance.Between(wx, wy, 41, 301) < 55) {
         this.teleportToFloor2(); return;
       }
       // Лифт: 2й → 1й этаж
@@ -1783,19 +1783,19 @@ class GameScene extends Phaser.Scene {
       fontSize: '13px', color: '#aa7733', fontFamily: 'monospace', fontStyle: 'bold'
     });
 
-    // Лифт на 1м этаже (внизу карты 1, около x=55-110, y=840-910)
+    // Лифт на 1м этаже — рядом с точкой спауна игрока (100, 300)
     const e1 = this.add.graphics();
     e1.fillStyle(0x554400, 1);
-    e1.fillRect(55, 838, 52, 72);
+    e1.fillRect(15, 268, 52, 66);
     e1.lineStyle(2, 0xffcc00, 1);
-    e1.strokeRect(55, 838, 52, 72);
+    e1.strokeRect(15, 268, 52, 66);
     e1.lineStyle(1, 0xffcc00, 0.6);
-    e1.lineBetween(81, 838, 81, 910);          // вертикальная линия — двери
+    e1.lineBetween(41, 268, 41, 334);          // вертикальная линия — двери
     e1.lineStyle(1, 0x887722, 0.5);
-    e1.lineBetween(55, 874, 107, 874);         // горизонтальная линия посередине
-    this.add.text(62, 845, '🛗',  { fontSize: '18px' });
-    this.add.text(62, 872, '2й▼', { fontSize: '9px',  color: '#ffdd00', fontFamily: 'monospace' });
-    this.add.text(62, 884, 'ЛИФТ', { fontSize: '8px', color: '#ffaa00', fontFamily: 'monospace' });
+    e1.lineBetween(15, 301, 67, 301);          // горизонтальная линия посередине
+    this.add.text(20, 272, '🛗',  { fontSize: '18px' });
+    this.add.text(20, 298, '2й▼', { fontSize: '9px',  color: '#ffdd00', fontFamily: 'monospace' });
+    this.add.text(20, 310, 'ЛИФТ', { fontSize: '8px', color: '#ffaa00', fontFamily: 'monospace' });
 
     // Лифт на 2м этаже (сразу под разделителем, около y=988-1040)
     const e2 = this.add.graphics();
