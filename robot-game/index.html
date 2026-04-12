@@ -8,7 +8,8 @@
     body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: monospace; }
     #game-container { position: relative; }
     #ui-overlay { position: absolute; top: 10px; left: 10px; color: #00ff88; font-size: 14px; pointer-events: none; }
-    #status-bar { background: rgba(0,0,0,0.7); padding: 6px 10px; border: 1px solid #00ff88; border-radius: 4px; margin-bottom: 6px; }
+    #status-bar { background: rgba(0,0,0,0.7); padding: 6px 10px; border: 1px solid #00ff88; border-radius: 4px; margin-bottom: 4px; }
+    #floor-indicator { background: rgba(0,0,0,0.7); padding: 4px 10px; border: 1px solid #ffdd44; border-radius: 4px; color: #ffdd44; font-size: 13px; display: inline-block; }
     #weapon-menu {
       display: none; position: absolute;
       background: rgba(10, 10, 30, 0.95);
@@ -16,7 +17,7 @@
       padding: 8px; z-index: 100;
     }
     .weapon-btn {
-      display: block; width: 180px; padding: 8px 12px; margin: 4px 0;
+      display: block; width: 195px; padding: 8px 12px; margin: 4px 0;
       background: rgba(0, 255, 136, 0.1); border: 1px solid #00ff88;
       color: #00ff88; font-family: monospace; font-size: 13px;
       cursor: pointer; border-radius: 4px; text-align: left; transition: background 0.15s;
@@ -24,19 +25,26 @@
     .weapon-btn:hover { background: rgba(0, 255, 136, 0.3); }
     .weapon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
     .weapon-btn .cooldown { float: right; color: #ff6644; font-size: 11px; }
+    #wcancel {
+      border-color: #ff6644 !important; color: #ff6644 !important;
+      background: rgba(255,100,68,0.1) !important; margin-top: 8px;
+    }
+    #wcancel:hover { background: rgba(255,100,68,0.3) !important; }
   </style>
 </head>
 <body>
 <div id="game-container">
   <div id="ui-overlay">
     <div id="status-bar">Кликни на своего робота</div>
+    <div id="floor-indicator">ЭТАЖ 1</div>
   </div>
   <div id="weapon-menu">
     <div style="color:#aaffcc; margin-bottom:6px; font-size:12px;">ВЫБЕРИ ОРУЖИЕ</div>
     <button class="weapon-btn" id="w0"></button>
     <button class="weapon-btn" id="w1"></button>
     <button class="weapon-btn" id="w2"></button>
-    <button class="weapon-btn" id="w3" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+    <button class="weapon-btn" id="w3" style="display:none"></button>
+    <button class="weapon-btn" id="wcancel">✖ Отмена</button>
   </div>
 </div>
 
@@ -47,19 +55,32 @@ const W = 800, H = 600;
 const TILE = 40;
 
 const WEAPONS = [
-  { name: '⚡ Лазер',   dmg: 15, cd: 1000,  range: 300, color: 0x00ffff,  desc: 'Быстро / слабый' },
-  { name: '🚀 Ракета',  dmg: 45, cd: 3500,  range: 260, color: 0xff6600,  desc: 'Медленно / сильный' },
-  { name: '💥 Дробовик',dmg: 30, cd: 2000,  range: 150, color: 0xffff00,  desc: 'Средне / близко' },
+  { name: '⚡ Лазер',    dmg: 15, cd: 1000, range: 300, color: 0x00ffff, desc: 'Быстро / слабый' },
+  { name: '🚀 Ракета',   dmg: 45, cd: 3500, range: 260, color: 0xff6600, desc: 'Медленно / сильный' },
+  { name: '💥 Дробовик', dmg: 30, cd: 2000, range: 150, color: 0xffff00, desc: 'Средне / близко' },
+  { name: '🔫 АК-47',    dmg: 12, cd: 2500, range: 280, color: 0xcc8800, desc: 'Очередь ×3', burst: 3, burstDelay: 250 },
 ];
 
-// ── GAME STATE ──────────────────────────────────────────────────────────────
-let selectedRobot = null;
-let selectedWeapon = null;
-let waitingForTarget = false;
-let robots = [];
-let gameOver = false;
+// ── FLOOR CONFIG ────────────────────────────────────────────────────────────
+const FLOOR_CONFIGS = [
+  { bgColor: 0x0d0d1a, gridColor: 0x1a1a3a, wallFill: 0x334455, wallStroke: 0x5577aa, rivetColor: 0x667788, name: 'ЭТАЖ 1' },
+  { bgColor: 0x0d0d1a, gridColor: 0x1a1a2a, wallFill: 0x3a3355, wallStroke: 0x7755aa, rivetColor: 0x776688, name: 'ЭТАЖ 2' },
+];
 
-// ── OBSTACLE LAYOUT ─────────────────────────────────────────────────────────
+// ── ELEVATOR ────────────────────────────────────────────────────────────────
+// Position is clear of all walls (verified with PAD=18)
+const ELEVATOR = { x: 400, y: 260, radius: 35 };
+
+// ── BOXES (floor 0 only) ────────────────────────────────────────────────────
+// Each box contains AK-47; robot must stand on it to use weapon
+const BOX_RADIUS = 32;
+const BOXES = [
+  { x: 270, y: 200, floor: 0, open: false, occupant: null },
+  { x: 500, y: 480, floor: 0, open: false, occupant: null },
+  { x: 200, y: 540, floor: 0, open: false, occupant: null },
+];
+
+// ── WALLS ───────────────────────────────────────────────────────────────────
 const WALLS = [
   { x: 200, y: 120, w: 40,  h: 120 },
   { x: 400, y: 80,  w: 120, h: 40  },
@@ -70,154 +91,252 @@ const WALLS = [
   { x: 380, y: 460, w: 40,  h: 100 },
 ];
 
+// ── GAME STATE ──────────────────────────────────────────────────────────────
+let selectedRobot  = null;
+let selectedWeapon = null;
+let waitingForTarget = false;
+let robots   = [];
+let gameOver = false;
+let currentFloor = 0;
+
 // ── PHASER SCENE ─────────────────────────────────────────────────────────────
 class GameScene extends Phaser.Scene {
   constructor() { super({ key: 'GameScene' }); }
 
   preload() {
-    // Draw robot texture programmatically
     const g = this.make.graphics({ x: 0, y: 0, add: false });
-    // Player robot: blue
-    g.clear();
-    g.fillStyle(0x2244cc, 1);
-    g.fillRect(4, 4, 28, 28);
-    g.fillStyle(0x88aaff, 1);
-    g.fillRect(10, 8, 8, 8);  // left eye
-    g.fillRect(22, 8, 8, 8);  // right eye
-    g.fillStyle(0x4466ee, 1);
-    g.fillRect(8, 20, 24, 6); // chest
+    // Blue player robot texture
+    g.fillStyle(0x2244cc, 1); g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0x88aaff, 1); g.fillRect(10, 8, 8, 8); g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0x4466ee, 1); g.fillRect(8, 20, 24, 6);
     g.generateTexture('player-robot', 36, 36);
-
-    g.clear();
-    g.fillStyle(0xcc2222, 1);
-    g.fillRect(4, 4, 28, 28);
-    g.fillStyle(0xff8888, 1);
-    g.fillRect(10, 8, 8, 8);
-    g.fillRect(22, 8, 8, 8);
-    g.fillStyle(0xee4444, 1);
-    g.fillRect(8, 20, 24, 6);
-    g.generateTexture('enemy-robot', 36, 36);
     g.destroy();
   }
 
   create() {
-    // Background grid
-    const bg = this.add.graphics();
-    bg.fillStyle(0x0d0d1a, 1);
-    bg.fillRect(0, 0, W, H);
-    bg.lineStyle(1, 0x1a1a3a, 0.6);
-    for (let x = 0; x <= W; x += TILE) bg.lineBetween(x, 0, x, H);
-    for (let y = 0; y <= H; y += TILE) bg.lineBetween(0, y, W, y);
-
-    // Walls
+    // ── Rendering layers ───────────────────────────────────────────────────
+    this.bgGraphics   = this.add.graphics();
+    this.gridGraphics = this.add.graphics();
     this.wallGraphics = this.add.graphics();
     this.wallRects = WALLS.map(w => new Phaser.Geom.Rectangle(w.x, w.y, w.w, w.h));
-    this.drawWalls();
+    this.redrawFloor();
 
-    // Robots
-    const makeRobot = (x, y, isPlayer, id) => ({
-      id, isPlayer, x, y,
+    // ── Boxes ─────────────────────────────────────────────────────────────
+    this.boxGraphics = BOXES.map(() => this.add.graphics());
+    this.boxLabels   = BOXES.map(b =>
+      this.add.text(b.x, b.y + 34, '🔫 АК-47', {
+        fontSize: '9px', color: '#ffaa00', fontFamily: 'monospace',
+        stroke: '#000', strokeThickness: 2,
+      }).setOrigin(0.5).setVisible(false)
+    );
+    BOXES.forEach((_, i) => this.drawBox(i));
+
+    // ── Elevator ──────────────────────────────────────────────────────────
+    this.elevatorGfx = this.add.graphics();
+    this.drawElevator();
+    this.add.text(ELEVATOR.x, ELEVATOR.y + ELEVATOR.radius + 10, 'ЛИФТ', {
+      fontSize: '11px', color: '#ffdd44', fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+
+    // ── Blue robots (players only, no enemies) ─────────────────────────────
+    const makeRobot = (x, y, id) => ({
+      id, isPlayer: true, x, y, floor: 0,
       hp: 100, maxHp: 100,
-      cooldowns: [0, 0, 0],
-      sprite: this.add.image(x, y, isPlayer ? 'player-robot' : 'enemy-robot').setOrigin(0.5),
+      cooldowns: [0, 0, 0, 0],
+      hasAK47: false,
+      sprite:        this.add.image(x, y, 'player-robot').setOrigin(0.5),
       selectionRing: this.add.graphics(),
-      hpBar: this.add.graphics(),
-      label: this.add.text(x, y + 24, isPlayer ? `P${id+1}` : `E${id+1}`,
-        { fontSize: '10px', color: isPlayer ? '#88aaff' : '#ff8888', fontFamily: 'monospace' }).setOrigin(0.5),
+      hpBar:         this.add.graphics(),
+      label:         this.add.text(x, y + 24, `P${id + 1}`,
+        { fontSize: '10px', color: '#88aaff', fontFamily: 'monospace' }).setOrigin(0.5),
     });
 
-    robots = [
-      makeRobot(100, 200, true,  0),
-      makeRobot(100, 420, true,  1),
-      makeRobot(680, 160, false, 0),
-      makeRobot(680, 440, false, 1),
-    ];
-
+    robots = [ makeRobot(100, 200, 0), makeRobot(100, 420, 1) ];
     this.robots = robots;
     this.updateAllHpBars();
 
-    // Click handler
-    this.input.on('pointerdown', (ptr) => this.handleClick(ptr.x, ptr.y));
-
-    // Enemy AI timer
-    this.time.addEvent({ delay: 2200, callback: this.enemyTurn, callbackScope: this, loop: true });
-
-    // Setup weapon menu buttons
-    document.getElementById('w3').onclick = () => this.cancelSelection();
-    [0, 1, 2].forEach(i => {
-      document.getElementById('w' + i).onclick = () => this.selectWeapon(i);
-    });
-
-    // Move indicator
-    this.moveIndicator = this.add.graphics();
-    this.shotLine = this.add.graphics();
-  }
-
-  drawWalls() {
-    const g = this.wallGraphics;
-    g.clear();
-    WALLS.forEach(w => {
-      g.fillStyle(0x334455, 1);
-      g.fillRect(w.x, w.y, w.w, w.h);
-      g.lineStyle(2, 0x5577aa, 1);
-      g.strokeRect(w.x, w.y, w.w, w.h);
-      // rivets
-      g.fillStyle(0x667788, 1);
-      g.fillRect(w.x + 4, w.y + 4, 5, 5);
-      g.fillRect(w.x + w.w - 9, w.y + 4, 5, 5);
-      g.fillRect(w.x + 4, w.y + w.h - 9, 5, 5);
-      g.fillRect(w.x + w.w - 9, w.y + w.h - 9, 5, 5);
-    });
-  }
-
-  isWall(x, y) {
-    const PAD = 18;
-    return this.wallRects.some(r =>
-      x > r.x - PAD && x < r.x + r.width + PAD &&
-      y > r.y - PAD && y < r.y + r.height + PAD
+    // ── Input ─────────────────────────────────────────────────────────────
+    this.input.on('pointerdown', ptr => this.handleClick(ptr.x, ptr.y));
+    document.getElementById('wcancel').onclick = () => this.cancelSelection();
+    [0, 1, 2, 3].forEach(i =>
+      document.getElementById('w' + i).onclick = () => this.selectWeapon(i)
     );
+
+    this.moveIndicator = this.add.graphics();
+    this.shotLine      = this.add.graphics();
   }
 
-  // ── LINE OF SIGHT ─────────────────────────────────────────────────────────
+  // ── FLOOR RENDERING ────────────────────────────────────────────────────────
 
-  // Returns true if segment AB intersects segment CD
-  segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
-    const d1x = bx - ax, d1y = by - ay;
-    const d2x = dx - cx, d2y = dy - cy;
-    const cross = d1x * d2y - d1y * d2x;
-    if (Math.abs(cross) < 1e-10) return false; // parallel
-    const ex = cx - ax, ey = cy - ay;
-    const t = (ex * d2y - ey * d2x) / cross;
-    const u = (ex * d1y - ey * d1x) / cross;
-    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
-  }
+  redrawFloor() {
+    const cfg = FLOOR_CONFIGS[currentFloor];
 
-  // Returns true if there is a clear line of sight between two points (no wall in between)
-  hasLineOfSight(x1, y1, x2, y2) {
-    return !this.wallRects.some(r => {
-      const rx = r.x, ry = r.y, rw = r.width, rh = r.height;
-      return (
-        this.segmentsIntersect(x1, y1, x2, y2, rx,      ry,      rx + rw, ry     ) || // top
-        this.segmentsIntersect(x1, y1, x2, y2, rx,      ry + rh, rx + rw, ry + rh) || // bottom
-        this.segmentsIntersect(x1, y1, x2, y2, rx,      ry,      rx,      ry + rh) || // left
-        this.segmentsIntersect(x1, y1, x2, y2, rx + rw, ry,      rx + rw, ry + rh)    // right
+    this.bgGraphics.clear();
+    this.bgGraphics.fillStyle(cfg.bgColor, 1);
+    this.bgGraphics.fillRect(0, 0, W, H);
+
+    this.gridGraphics.clear();
+    this.gridGraphics.lineStyle(1, cfg.gridColor, 0.6);
+    for (let x = 0; x <= W; x += TILE) this.gridGraphics.lineBetween(x, 0, x, H);
+    for (let y = 0; y <= H; y += TILE) this.gridGraphics.lineBetween(0, y, W, y);
+
+    this.wallGraphics.clear();
+    WALLS.forEach(w => {
+      this.wallGraphics.fillStyle(cfg.wallFill, 1);
+      this.wallGraphics.fillRect(w.x, w.y, w.w, w.h);
+      this.wallGraphics.lineStyle(2, cfg.wallStroke, 1);
+      this.wallGraphics.strokeRect(w.x, w.y, w.w, w.h);
+      this.wallGraphics.fillStyle(cfg.rivetColor, 1);
+      [[4, 4], [w.w - 9, 4], [4, w.h - 9], [w.w - 9, w.h - 9]].forEach(([rx, ry]) =>
+        this.wallGraphics.fillRect(w.x + rx, w.y + ry, 5, 5)
       );
     });
+
+    document.getElementById('floor-indicator').textContent = cfg.name;
   }
 
-  clampToMap(x, y) {
-    return { x: Phaser.Math.Clamp(x, 25, W - 25), y: Phaser.Math.Clamp(y, 25, H - 25) };
+  // ── BOXES ──────────────────────────────────────────────────────────────────
+
+  drawBox(idx) {
+    const box = BOXES[idx];
+    const g   = this.boxGraphics[idx];
+    g.clear();
+    const vis = box.floor === currentFloor;
+    g.setVisible(vis);
+    if (!vis) return;
+    const { x, y } = box;
+
+    if (!box.open) {
+      // Closed box
+      g.fillStyle(0x8b4513, 1); g.fillRect(x - 16, y - 14, 32, 28);
+      g.lineStyle(2, 0xd2691e, 1); g.strokeRect(x - 16, y - 14, 32, 28);
+      // Lid
+      g.fillStyle(0xa0522d, 1); g.fillRect(x - 18, y - 20, 36, 8);
+      g.lineStyle(2, 0xd2691e, 1); g.strokeRect(x - 18, y - 20, 36, 8);
+      // Lock
+      g.fillStyle(0xffdd44, 1); g.fillCircle(x, y - 6, 4);
+    } else {
+      // Open box with golden glow
+      g.fillStyle(0xffaa00, 0.2); g.fillCircle(x, y, 34);
+      g.fillStyle(0x8b4513, 1); g.fillRect(x - 16, y, 32, 14);
+      g.lineStyle(2, 0xffaa00, 1); g.strokeRect(x - 16, y, 32, 14);
+      // Open lid tilted upward
+      g.fillStyle(0xa0522d, 1); g.fillRect(x - 18, y - 32, 36, 8);
+      g.lineStyle(2, 0xffdd00, 1); g.strokeRect(x - 18, y - 32, 36, 8);
+      // Glow ring
+      g.lineStyle(2, 0xffdd00, 0.7); g.strokeCircle(x, y, 28);
+    }
   }
 
-  updateAllHpBars() {
-    this.robots.forEach(r => this.drawHpBar(r));
+  // Returns true if status was updated (item picked up / dropped)
+  checkBoxes(robot) {
+    let changed = false;
+    BOXES.forEach((box, i) => {
+      // If box is on a different floor, close it if this robot was occupying it
+      if (box.floor !== robot.floor) {
+        if (box.occupant === robot) {
+          box.open = false; box.occupant = null; robot.hasAK47 = false;
+          this.drawBox(i); this.boxLabels[i].setVisible(false);
+          changed = true;
+        }
+        return;
+      }
+      const dist = Phaser.Math.Distance.Between(robot.x, robot.y, box.x, box.y);
+      if (dist <= BOX_RADIUS && !box.open) {
+        // Robot enters box — pick up AK-47
+        box.open = true; box.occupant = robot; robot.hasAK47 = true;
+        this.drawBox(i); this.boxLabels[i].setVisible(true);
+        this.updateStatus(`${robot.label.text} подобрал 🔫 АК-47!`);
+        changed = true;
+      } else if (box.occupant === robot && dist > BOX_RADIUS) {
+        // Robot left box — lose AK-47
+        box.open = false; box.occupant = null; robot.hasAK47 = false;
+        this.drawBox(i); this.boxLabels[i].setVisible(false);
+        changed = true;
+      }
+    });
+    return changed;
   }
+
+  releaseBoxes(robot) {
+    BOXES.forEach((box, i) => {
+      if (box.occupant === robot) {
+        box.open = false; box.occupant = null; robot.hasAK47 = false;
+        this.drawBox(i); this.boxLabels[i].setVisible(false);
+      }
+    });
+  }
+
+  updateBoxVisibility() {
+    BOXES.forEach((box, i) => {
+      const vis = box.floor === currentFloor;
+      this.boxGraphics[i].setVisible(vis);
+      this.boxLabels[i].setVisible(vis && box.open);
+    });
+  }
+
+  // ── ELEVATOR ───────────────────────────────────────────────────────────────
+
+  drawElevator() {
+    const g = this.elevatorGfx;
+    g.clear();
+    const { x, y, radius: r } = ELEVATOR;
+    // Outer glow
+    g.fillStyle(0xffdd00, 0.15); g.fillCircle(x, y, r + 10);
+    // Platform
+    g.fillStyle(0xffaa00, 1);    g.fillCircle(x, y, r);
+    // Inner highlight
+    g.fillStyle(0xffee66, 1);    g.fillCircle(x, y, r - 8);
+    // Up arrow ▲
+    g.fillStyle(0x443300, 1);
+    g.fillTriangle(x, y - 18, x - 10, y - 6, x + 10, y - 6);
+    // Down arrow ▼
+    g.fillTriangle(x, y + 18, x - 10, y + 6, x + 10, y + 6);
+    // Border ring
+    g.lineStyle(2, 0xffffff, 0.6); g.strokeCircle(x, y, r);
+  }
+
+  // Returns true if elevator was used
+  checkElevator(robot) {
+    // Only blue (player) robots can use the elevator
+    if (!robot.isPlayer) return false;
+    const dist = Phaser.Math.Distance.Between(robot.x, robot.y, ELEVATOR.x, ELEVATOR.y);
+    if (dist > ELEVATOR.radius) return false;
+
+    // Release any box items before changing floor
+    this.releaseBoxes(robot);
+
+    const newFloor = 1 - robot.floor;
+    robot.floor  = newFloor;
+    currentFloor = newFloor;
+
+    this.redrawFloor();
+    this.updateRobotVisibility();
+    this.updateBoxVisibility();
+    this.cameras.main.flash(280, 200, 200, 255, false);
+    this.updateStatus(`${robot.label.text} → ${FLOOR_CONFIGS[newFloor].name}!`);
+    return true;
+  }
+
+  // ── ROBOT VISIBILITY / HP ──────────────────────────────────────────────────
+
+  updateRobotVisibility() {
+    this.robots.forEach(r => {
+      const vis = r.floor === currentFloor;
+      r.sprite.setVisible(vis);
+      r.hpBar.setVisible(vis);
+      r.label.setVisible(vis);
+      r.selectionRing.setVisible(vis);
+    });
+  }
+
+  updateAllHpBars() { this.robots.forEach(r => this.drawHpBar(r)); }
 
   drawHpBar(robot) {
     const g = robot.hpBar;
     g.clear();
-    const bw = 36, bh = 5;
-    const bx = robot.x - bw / 2, by = robot.y - 28;
+    const bw = 36, bh = 5, bx = robot.x - 18, by = robot.y - 28;
     g.fillStyle(0x330000, 1); g.fillRect(bx, by, bw, bh);
     const pct = Math.max(0, robot.hp / robot.maxHp);
     const col = pct > 0.5 ? 0x00dd44 : pct > 0.25 ? 0xffaa00 : 0xff2200;
@@ -231,41 +350,76 @@ class GameScene extends Phaser.Scene {
     const g = robot.selectionRing;
     g.lineStyle(2, 0x00ff88, 1);
     g.strokeCircle(robot.x, robot.y, 22);
-    // corner markers
-    g.lineStyle(2, 0x00ff88, 1);
     [-1, 1].forEach(sx => [-1, 1].forEach(sy => {
       g.lineBetween(robot.x + sx * 22, robot.y + sy * 16, robot.x + sx * 22, robot.y + sy * 22);
       g.lineBetween(robot.x + sx * 16, robot.y + sy * 22, robot.x + sx * 22, robot.y + sy * 22);
     }));
   }
 
+  // ── WALL / LOS HELPERS ─────────────────────────────────────────────────────
+
+  isWall(x, y) {
+    const PAD = 18;
+    return this.wallRects.some(r =>
+      x > r.x - PAD && x < r.x + r.width  + PAD &&
+      y > r.y - PAD && y < r.y + r.height + PAD
+    );
+  }
+
+  segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+    const d1x = bx - ax, d1y = by - ay, d2x = dx - cx, d2y = dy - cy;
+    const cross = d1x * d2y - d1y * d2x;
+    if (Math.abs(cross) < 1e-10) return false;
+    const ex = cx - ax, ey = cy - ay;
+    const t = (ex * d2y - ey * d2x) / cross;
+    const u = (ex * d1y - ey * d1x) / cross;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  }
+
+  hasLineOfSight(x1, y1, x2, y2) {
+    return !this.wallRects.some(r => {
+      const { x: rx, y: ry, width: rw, height: rh } = r;
+      return (
+        this.segmentsIntersect(x1, y1, x2, y2, rx,      ry,      rx + rw, ry      ) ||
+        this.segmentsIntersect(x1, y1, x2, y2, rx,      ry + rh, rx + rw, ry + rh ) ||
+        this.segmentsIntersect(x1, y1, x2, y2, rx,      ry,      rx,      ry + rh ) ||
+        this.segmentsIntersect(x1, y1, x2, y2, rx + rw, ry,      rx + rw, ry + rh )
+      );
+    });
+  }
+
+  clampToMap(x, y) {
+    return { x: Phaser.Math.Clamp(x, 25, W - 25), y: Phaser.Math.Clamp(y, 25, H - 25) };
+  }
+
+  // ── INPUT ──────────────────────────────────────────────────────────────────
+
   handleClick(x, y) {
     if (gameOver) return;
 
-    // Click on a robot?
-    const clicked = this.robots.find(r => r.hp > 0 && Phaser.Math.Distance.Between(x, y, r.x, r.y) < 22);
+    const clicked = this.robots.find(r =>
+      r.hp > 0 && r.floor === currentFloor &&
+      Phaser.Math.Distance.Between(x, y, r.x, r.y) < 22
+    );
 
     if (waitingForTarget) {
-      if (clicked && !clicked.isPlayer) {
-        this.attackRobot(selectedRobot, clicked, selectedWeapon);
-      } else if (!clicked) {
-        this.moveRobot(selectedRobot, x, y);
-      }
+      // In weapon-selected mode: click empty space to move, anything else to cancel
+      if (!clicked) this.moveRobot(selectedRobot, x, y);
       this.cancelSelection();
       return;
     }
 
     if (clicked && clicked.isPlayer) {
-      selectedRobot = clicked;
+      selectedRobot  = clicked;
       selectedWeapon = null;
       waitingForTarget = false;
       this.drawSelectionRing(clicked);
       this.showWeaponMenu(x, y, clicked);
-      this.updateStatus(`${clicked.label.text} выбран — выбери оружие или двигайся`);
+      this.updateStatus(`${clicked.label.text} выбран`);
       return;
     }
 
-    // Click empty space without selection
+    // Click on empty space with a robot already selected — move directly
     if (selectedRobot && !document.getElementById('weapon-menu').style.display.includes('block')) {
       this.moveRobot(selectedRobot, x, y);
       this.cancelSelection();
@@ -274,18 +428,32 @@ class GameScene extends Phaser.Scene {
 
   showWeaponMenu(px, py, robot) {
     const menu = document.getElementById('weapon-menu');
-    const now = Date.now();
-    WEAPONS.forEach((w, i) => {
-      const btn = document.getElementById('w' + i);
-      const cdLeft = Math.max(0, robot.cooldowns[i] - now);
+    const now  = Date.now();
+
+    [0, 1, 2].forEach(i => {
+      const w = WEAPONS[i], btn = document.getElementById('w' + i);
+      const cd = Math.max(0, robot.cooldowns[i] - now);
       btn.innerHTML = `${w.name} <small style="color:#aaa">${w.desc}</small>` +
-        (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
-      btn.disabled = cdLeft > 0;
+        (cd > 0 ? `<span class="cooldown">${(cd / 1000).toFixed(1)}s</span>` : '');
+      btn.disabled = cd > 0;
+      btn.style.display = 'block';
     });
-    // Position near click, keep inside window
+
+    // AK-47 button: visible only when robot is standing on a box
+    const ak47btn = document.getElementById('w3');
+    if (robot.hasAK47) {
+      const w = WEAPONS[3], cd = Math.max(0, robot.cooldowns[3] - now);
+      ak47btn.innerHTML = `${w.name} <small style="color:#aaa">${w.desc}</small>` +
+        (cd > 0 ? `<span class="cooldown">${(cd / 1000).toFixed(1)}s</span>` : '');
+      ak47btn.disabled = cd > 0;
+      ak47btn.style.display = 'block';
+    } else {
+      ak47btn.style.display = 'none';
+    }
+
     let mx = px + 10, my = py + 10;
-    if (mx + 200 > W) mx = px - 200;
-    if (my + 180 > H) my = py - 180;
+    if (mx + 215 > W) mx = px - 215;
+    if (my + 260 > H) my = py - 260;
     menu.style.left = mx + 'px';
     menu.style.top  = my + 'px';
     menu.style.display = 'block';
@@ -297,25 +465,26 @@ class GameScene extends Phaser.Scene {
 
   selectWeapon(idx) {
     this.hideWeaponMenu();
-    selectedWeapon = idx;
+    selectedWeapon   = idx;
     waitingForTarget = true;
     const w = WEAPONS[idx];
-    this.updateStatus(`${w.name} выбран — кликни на врага для атаки или на карту для движения (радиус: ${w.range})`);
-    // Show range ring
+    this.updateStatus(`${w.name} готово — кликни на карту для движения`);
     this.moveIndicator.clear();
-    this.moveIndicator.lineStyle(1, w.color, 0.3);
+    this.moveIndicator.lineStyle(1, w.color, 0.25);
     this.moveIndicator.strokeCircle(selectedRobot.x, selectedRobot.y, w.range);
   }
 
   cancelSelection() {
     this.hideWeaponMenu();
-    selectedRobot = null;
-    selectedWeapon = null;
+    selectedRobot    = null;
+    selectedWeapon   = null;
     waitingForTarget = false;
     this.drawSelectionRing(null);
     this.moveIndicator.clear();
     this.updateStatus('Кликни на своего робота');
   }
+
+  // ── MOVEMENT ───────────────────────────────────────────────────────────────
 
   moveRobot(robot, tx, ty) {
     const clamped = this.clampToMap(tx, ty);
@@ -329,14 +498,11 @@ class GameScene extends Phaser.Scene {
       clamped.x = robot.x + (clamped.x - robot.x) * MAX_MOVE / dist;
       clamped.y = robot.y + (clamped.y - robot.y) * MAX_MOVE / dist;
     }
-    // Move animation
+
     this.tweens.add({
       targets: [robot.sprite, robot.hpBar, robot.selectionRing, robot.label],
-      x: clamped.x, y: (target) => {
-        if (target === robot.hpBar) return clamped.y;
-        if (target === robot.label) return clamped.y + 24;
-        return clamped.y;
-      },
+      x: clamped.x,
+      y: t => t === robot.label ? clamped.y + 24 : clamped.y,
       duration: 300, ease: 'Power2',
       onUpdate: () => {
         robot.x = robot.sprite.x;
@@ -346,42 +512,56 @@ class GameScene extends Phaser.Scene {
       onComplete: () => {
         robot.x = clamped.x;
         robot.y = clamped.y;
-        this.updateStatus('Кликни на своего робота');
+        const gotItem      = this.checkBoxes(robot);
+        const usedElevator = this.checkElevator(robot);
+        if (!gotItem && !usedElevator) this.updateStatus('Кликни на своего робота');
       }
     });
-    // Move indicator
+
     this.moveIndicator.clear();
     this.moveIndicator.lineStyle(1, 0x00ff88, 0.5);
     this.moveIndicator.lineBetween(robot.x, robot.y, clamped.x, clamped.y);
     this.time.delayedCall(400, () => this.moveIndicator.clear());
   }
 
+  // ── COMBAT (ready for future enemies) ─────────────────────────────────────
+
   attackRobot(attacker, target, wIdx) {
-    const w = WEAPONS[wIdx];
+    const w    = WEAPONS[wIdx];
     const dist = Phaser.Math.Distance.Between(attacker.x, attacker.y, target.x, target.y);
     if (dist > w.range) {
-      this.updateStatus(`Слишком далеко! Максимальный радиус ${w.name}: ${w.range}`);
+      this.updateStatus(`Слишком далеко! Радиус ${w.name}: ${w.range}`);
       return;
     }
-    // Line-of-sight check: cannot shoot through walls
     if (!this.hasLineOfSight(attacker.x, attacker.y, target.x, target.y)) {
-      this.updateStatus(`Цель за стеной! Выйди на линию огня.`);
+      this.updateStatus('Цель за стеной! Выйди на линию огня.');
       return;
     }
-    // Set cooldown
     attacker.cooldowns[wIdx] = Date.now() + w.cd;
-    // Apply damage with small random variance
-    const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
-    target.hp = Math.max(0, target.hp - dmg);
-    this.drawHpBar(target);
 
-    // Shot effect
-    this.showShotEffect(attacker, target, w);
-    this.showDmgNumber(target.x, target.y, dmg, w.color);
-    this.updateStatus(`${attacker.label.text} стреляет ${w.name} → ${target.label.text}: -${dmg} HP`);
-
-    if (target.hp <= 0) {
-      this.killRobot(target);
+    if (w.burst) {
+      // AK-47 burst fire: 3 shots with 250ms interval
+      let shots = w.burst;
+      const fire = () => {
+        if (shots-- <= 0 || target.hp <= 0) return;
+        const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+        target.hp = Math.max(0, target.hp - dmg);
+        this.drawHpBar(target);
+        this.showShotEffect(attacker, target, w);
+        this.showDmgNumber(target.x, target.y, dmg, w.color);
+        if (target.hp <= 0) { this.killRobot(target); return; }
+        if (shots > 0) this.time.delayedCall(w.burstDelay, fire);
+      };
+      fire();
+      this.updateStatus(`${attacker.label.text} очередь ${w.name} → ${target.label.text}`);
+    } else {
+      const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+      target.hp = Math.max(0, target.hp - dmg);
+      this.drawHpBar(target);
+      this.showShotEffect(attacker, target, w);
+      this.showDmgNumber(target.x, target.y, dmg, w.color);
+      this.updateStatus(`${attacker.label.text} ${w.name} → ${target.label.text}: -${dmg} HP`);
+      if (target.hp <= 0) this.killRobot(target);
     }
   }
 
@@ -390,124 +570,25 @@ class GameScene extends Phaser.Scene {
     g.clear();
     g.lineStyle(3, weapon.color, 1);
     g.lineBetween(from.x, from.y, to.x, to.y);
-    // Muzzle flash
-    const flash = this.add.graphics();
-    flash.fillStyle(weapon.color, 1);
-    flash.fillCircle(from.x, from.y, 8);
-    // Impact
-    const impact = this.add.graphics();
-    impact.fillStyle(weapon.color, 0.8);
-    impact.fillCircle(to.x, to.y, 12);
+    const flash  = this.add.graphics(); flash.fillStyle(weapon.color, 1);   flash.fillCircle(from.x, from.y, 8);
+    const impact = this.add.graphics(); impact.fillStyle(weapon.color, 0.8); impact.fillCircle(to.x, to.y, 12);
     this.time.delayedCall(120, () => { g.clear(); flash.destroy(); impact.destroy(); });
   }
 
   showDmgNumber(x, y, dmg, color) {
     const txt = this.add.text(x, y - 20, `-${dmg}`, {
       fontSize: '18px', color: '#' + color.toString(16).padStart(6, '0'),
-      fontFamily: 'monospace', fontStyle: 'bold',
-      stroke: '#000', strokeThickness: 3,
+      fontFamily: 'monospace', fontStyle: 'bold', stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5);
-    this.tweens.add({
-      targets: txt, y: y - 60, alpha: 0, duration: 900,
-      onComplete: () => txt.destroy()
-    });
+    this.tweens.add({ targets: txt, y: y - 60, alpha: 0, duration: 900, onComplete: () => txt.destroy() });
   }
 
   killRobot(robot) {
-    // Explosion effect
     const ex = this.add.graphics();
-    [0xff4400, 0xffaa00, 0xffff00].forEach((c, i) => {
-      this.time.delayedCall(i * 80, () => {
-        ex.clear();
-        ex.fillStyle(c, 1);
-        ex.fillCircle(robot.x, robot.y, 24 + i * 6);
-      });
-    });
-    this.time.delayedCall(300, () => {
-      ex.destroy();
-      robot.sprite.setAlpha(0.25).setTint(0x444444);
-      robot.hpBar.clear();
-    });
-
-    // Check win/lose
-    this.time.delayedCall(500, () => this.checkEndgame());
-  }
-
-  checkEndgame() {
-    const playersAlive = this.robots.filter(r => r.isPlayer && r.hp > 0).length;
-    const enemiesAlive = this.robots.filter(r => !r.isPlayer && r.hp > 0).length;
-    if (playersAlive === 0) {
-      gameOver = true;
-      this.showEndScreen('☠ ПОРАЖЕНИЕ', '#ff2200');
-    } else if (enemiesAlive === 0) {
-      gameOver = true;
-      this.showEndScreen('🏆 ПОБЕДА!', '#00ff88');
-    }
-  }
-
-  showEndScreen(msg, color) {
-    this.add.rectangle(W / 2, H / 2, 320, 100, 0x000000, 0.85);
-    this.add.text(W / 2, H / 2, msg, {
-      fontSize: '42px', color, fontFamily: 'monospace', fontStyle: 'bold',
-      stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5);
-    this.add.text(W / 2, H / 2 + 36, 'Обнови страницу для новой игры', {
-      fontSize: '14px', color: '#aaaaaa', fontFamily: 'monospace',
-    }).setOrigin(0.5);
-  }
-
-  // Simple enemy AI
-  enemyTurn() {
-    if (gameOver) return;
-    const enemies = this.robots.filter(r => !r.isPlayer && r.hp > 0);
-    const players = this.robots.filter(r => r.isPlayer && r.hp > 0);
-    if (!enemies.length || !players.length) return;
-
-    const now = Date.now();
-    enemies.forEach(enemy => {
-      // Find closest player
-      const target = players.reduce((closest, p) =>
-        Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y) <
-        Phaser.Math.Distance.Between(enemy.x, enemy.y, closest.x, closest.y) ? p : closest
-      );
-      const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
-
-      // Pick best available weapon in range with clear line of sight
-      let bestW = -1;
-      WEAPONS.forEach((w, i) => {
-        if (enemy.cooldowns[i] <= now && dist <= w.range &&
-            this.hasLineOfSight(enemy.x, enemy.y, target.x, target.y)) {
-          if (bestW < 0 || WEAPONS[i].dmg > WEAPONS[bestW].dmg) bestW = i;
-        }
-      });
-
-      if (bestW >= 0) {
-        // Attack
-        this.attackRobot(enemy, target, bestW);
-        this.drawSelectionRing({ ...enemy, selectionRing: enemy.selectionRing });
-      } else {
-        // Move toward player
-        const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
-        const moveD = 80;
-        let nx = enemy.x + Math.cos(angle) * moveD;
-        let ny = enemy.y + Math.sin(angle) * moveD;
-        const c = this.clampToMap(nx, ny);
-        if (!this.isWall(c.x, c.y)) {
-          this.tweens.add({
-            targets: [enemy.sprite, enemy.hpBar, enemy.selectionRing, enemy.label],
-            x: c.x,
-            y: (t) => t === enemy.label ? c.y + 24 : c.y,
-            duration: 400, ease: 'Power1',
-            onUpdate: () => {
-              enemy.x = enemy.sprite.x;
-              enemy.y = enemy.sprite.y;
-              this.drawHpBar(enemy);
-            },
-            onComplete: () => { enemy.x = c.x; enemy.y = c.y; }
-          });
-        }
-      }
-    });
+    [0xff4400, 0xffaa00, 0xffff00].forEach((c, i) =>
+      this.time.delayedCall(i * 80, () => { ex.clear(); ex.fillStyle(c, 1); ex.fillCircle(robot.x, robot.y, 24 + i * 6); })
+    );
+    this.time.delayedCall(300, () => { ex.destroy(); robot.sprite.setAlpha(0.25).setTint(0x444444); robot.hpBar.clear(); });
   }
 
   updateStatus(msg) {
@@ -517,10 +598,8 @@ class GameScene extends Phaser.Scene {
 
 // ── BOOT ────────────────────────────────────────────────────────────────────
 const game = new Phaser.Game({
-  type: Phaser.AUTO,
-  width: W, height: H,
-  parent: 'game-container',
-  backgroundColor: '#0d0d1a',
+  type: Phaser.AUTO, width: W, height: H,
+  parent: 'game-container', backgroundColor: '#0d0d1a',
   scene: GameScene,
 });
 </script>
