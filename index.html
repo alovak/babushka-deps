@@ -1,0 +1,1756 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Robot Tactics 🤖</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: monospace; }
+    #game-container { position: relative; }
+    #ui-overlay { position: absolute; top: 10px; left: 10px; color: #00ff88; font-size: 14px; pointer-events: none; }
+    #status-bar { background: rgba(0,0,0,0.7); padding: 6px 10px; border: 1px solid #00ff88; border-radius: 4px; margin-bottom: 6px; }
+    #weapon-menu {
+      display: none; position: absolute;
+      background: rgba(10, 10, 30, 0.97);
+      border: 2px solid #00ff88; border-radius: 8px;
+      padding: 10px; z-index: 100;
+      touch-action: none;
+    }
+    .weapon-btn {
+      display: block; width: 230px; padding: 14px 16px; margin: 6px 0;
+      background: rgba(0, 255, 136, 0.1); border: 1px solid #00ff88;
+      color: #00ff88; font-family: monospace; font-size: 16px;
+      cursor: pointer; border-radius: 6px; text-align: left; transition: background 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .weapon-btn:active, .weapon-btn.touch-active { background: rgba(0, 255, 136, 0.4); }
+    .weapon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .weapon-btn .cooldown { float: right; color: #ff6644; font-size: 12px; }
+  </style>
+</head>
+<body>
+<div id="game-container">
+  <div id="ui-overlay">
+    <div id="status-bar">Тапни на карту — двигаться. Тапни на врага — стрелять. Удержи — выбор оружия.</div>
+    <div id="lives-bar">❤️ ❤️ ❤️ ❤️ ❤️</div>
+  </div>
+  <div id="weapon-menu">
+    <div style="color:#aaffcc; margin-bottom:6px; font-size:12px;">ВЫБЕРИ ОРУЖИЕ</div>
+    <button class="weapon-btn" id="w0"></button>
+    <button class="weapon-btn" id="w1"></button>
+    <button class="weapon-btn" id="w2"></button>
+    <button class="weapon-btn" id="w3"></button>
+    <button class="weapon-btn" id="w4"></button>
+    <button class="weapon-btn" id="w5"></button>
+    <button class="weapon-btn" id="w6"></button>
+    <button class="weapon-btn" id="w7" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+<script>
+// ── CONFIG ─────────────────────────────────────────────────────────────────
+const W = 1200, H = 850;
+const MAP3_H = 900;                      // map 3 zone above map 1 (negative y)
+const WORLD_W = 2600, WORLD_H = H;
+const TILE = 40;
+
+const WEAPONS = [
+  { name: '⚡ Лазер',    dmg: 15,  cd: 1000, range: 300, color: 0x00ffff, enemyColor: 0xff2222, desc: 'Быстро / слабый' },
+  { name: '🚀 Ракета',   dmg: 45,  cd: 3500, range: 260, color: 0xff8800, enemyColor: 0xcc00ff, desc: 'Медленно / сильный' },
+  { name: '💥 Дробовик', dmg: 30,  cd: 2000, range: 150, color: 0xffff00, enemyColor: 0xff4400, desc: 'Средне / близко' },
+  { name: '💣 Граната',  dmg: 999, cd: 7000, range: 280, color: 0x44ff44, desc: 'Через стены / убивает', noLOS: true, playerOnly: true },
+  { name: '🔥 Миниган',  dmg: 8,   cd: 60,   range: 260, color: 0xff4400, enemyColor: 0xff4400, desc: '1000 пуль/мин · авто', playerOnly: true, minigun: true },
+  { name: '🚗 Машина',  dmg: 0,   cd: 0,    range: 0,   color: 0x4488ff, desc: 'Выпустить союзную машину', playerOnly: true, vehicleWeapon: true },
+  { name: '🍯 Мёд',    dmg: 45,  cd: 2000, range: 280, color: 0xff8800, enemyColor: 0xff8800, desc: 'Двойная ракета · 2с', dualRocket: true, playerOnly: true },
+];
+
+// ── GAME STATE ──────────────────────────────────────────────────────────────
+let selectedRobot = null;
+let armedWeapon = null;
+let robots = [];
+let gameOver = false;
+let lives = 5;
+let deployedDrone = null;
+let deployedVehicleCount = 0;
+
+// ── OBSTACLE LAYOUT ─────────────────────────────────────────────────────────
+const WALLS = [
+  // Left column L-shape
+  { x: 240, y: 100, w: 40,  h: 200 },
+  { x: 240, y: 100, w: 160, h: 40  },
+  // Center-top bar + right post
+  { x: 500, y: 200, w: 200, h: 40  },
+  { x: 700, y: 200, w: 40,  h: 170 },
+  // Far right top block
+  { x: 900, y: 100, w: 40,  h: 160 },
+  { x: 940, y: 100, w: 180, h: 40  },
+  // Left mid horizontal
+  { x: 100, y: 400, w: 200, h: 40  },
+  // Center mid T-shape
+  { x: 480, y: 380, w: 40,  h: 220 },
+  { x: 480, y: 380, w: 180, h: 40  },
+  // Right mid passage
+  { x: 780, y: 360, w: 160, h: 40  },
+  { x: 980, y: 300, w: 40,  h: 180 },
+  // Lower left L
+  { x: 180, y: 560, w: 40,  h: 160 },
+  { x: 180, y: 560, w: 140, h: 40  },
+  // Lower center pillar
+  { x: 600, y: 570, w: 40,  h: 240 },
+  { x: 600, y: 750, w: 200, h: 40  },
+  // Lower right block
+  { x: 820, y: 620, w: 200, h: 40  },
+  { x: 1060, y: 520, w: 40, h: 240 },
+  // Bottom mid barrier
+  { x: 360, y: 730, w: 180, h: 40  },
+
+  // ── Map 3 separator: horizontal wall with two corridor gaps (above map 1) ─
+  // Corridors are vertical passages at x=230-370 and x=830-970
+  { x: 0,   y: -22, w: 230,  h: 44 },   // left block
+  { x: 370, y: -22, w: 460,  h: 44 },   // center block
+  { x: 970, y: -22, w: 230,  h: 44 },   // right block
+
+  // ── Map 3 obstacles ──────────────────────────────────────────────────────
+  // Upper-left cluster
+  { x: 100,  y: -820, w: 40,  h: 200 },
+  { x: 100,  y: -820, w: 200, h: 40  },
+  // Upper-center tower
+  { x: 440,  y: -760, w: 200, h: 40  },
+  { x: 580,  y: -760, w: 40,  h: 200 },
+  // Upper-right
+  { x: 780,  y: -820, w: 200, h: 40  },
+  { x: 780,  y: -820, w: 40,  h: 200 },
+  { x: 1060, y: -760, w: 40,  h: 180 },
+  // Mid-left
+  { x: 200,  y: -540, w: 200, h: 40  },
+  { x: 200,  y: -540, w: 40,  h: 200 },
+  // Mid-center passage
+  { x: 480,  y: -480, w: 40,  h: 200 },
+  { x: 440,  y: -480, w: 120, h: 40  },
+  // Mid-right
+  { x: 720,  y: -540, w: 200, h: 40  },
+  { x: 880,  y: -540, w: 40,  h: 200 },
+  { x: 1000, y: -420, w: 160, h: 40  },
+
+  // ── Map 1/2 separator: vertical wall with two corridor gaps ──────────────
+  // Corridor 1: y=210-340, Corridor 2: y=510-640
+  { x: 1160, y: 0,   w: 280, h: 210 },  // top block
+  { x: 1160, y: 340, w: 280, h: 170 },  // middle block
+  { x: 1160, y: 640, w: 280, h: 210 },  // bottom block
+
+  // ── Map 3/4 separator: vertical wall with two corridor gaps ──────────────
+  // Corridor 1: y=-700 to -570, Corridor 2: y=-300 to -170
+  { x: 1160, y: -900, w: 280, h: 200 },  // top block    (-900 to -700)
+  { x: 1160, y: -570, w: 280, h: 270 },  // middle block (-570 to -300)
+  { x: 1160, y: -170, w: 280, h: 170 },  // bottom block (-170 to 0)
+
+  // ── Map 2/4 separator: horizontal wall with two corridor gaps ────────────
+  // Corridors at x=1640-1780 and x=2240-2380
+  { x: 1440, y: -22, w: 200, h: 44 },   // left block
+  { x: 1780, y: -22, w: 460, h: 44 },   // center block
+  { x: 2380, y: -22, w: 220, h: 44 },   // right block
+
+  // ── Map 4 obstacles (x:1440-2600, y:-900 to 0) ───────────────────────────
+  // Upper-left cluster
+  { x: 1540, y: -820, w: 40,  h: 200 },
+  { x: 1540, y: -820, w: 200, h: 40  },
+  // Upper-center tower
+  { x: 1880, y: -760, w: 200, h: 40  },
+  { x: 1880, y: -760, w: 40,  h: 200 },
+  // Upper-right fortress
+  { x: 2220, y: -820, w: 200, h: 40  },
+  { x: 2220, y: -820, w: 40,  h: 200 },
+  { x: 2500, y: -760, w: 40,  h: 180 },
+  // Mid-left
+  { x: 1640, y: -540, w: 200, h: 40  },
+  { x: 1800, y: -540, w: 40,  h: 200 },
+  // Mid-center passage
+  { x: 1960, y: -480, w: 40,  h: 200 },
+  { x: 1920, y: -480, w: 120, h: 40  },
+  // Mid-right
+  { x: 2160, y: -540, w: 200, h: 40  },
+  { x: 2320, y: -540, w: 40,  h: 200 },
+  { x: 2440, y: -420, w: 160, h: 40  },
+
+  // ── Map 2 obstacles ──────────────────────────────────────────────────────
+  // Upper-left cluster
+  { x: 1520, y: 100, w: 40,  h: 180 },
+  { x: 1520, y: 100, w: 180, h: 40  },
+  // Upper-center T
+  { x: 1780, y: 180, w: 200, h: 40  },
+  { x: 1780, y: 180, w: 40,  h: 180 },
+  // Upper-right fortress
+  { x: 2080, y: 100, w: 200, h: 40  },
+  { x: 2080, y: 100, w: 40,  h: 160 },
+  { x: 2380, y: 140, w: 40,  h: 200 },
+  // Center island
+  { x: 1680, y: 360, w: 180, h: 40  },
+  { x: 1820, y: 360, w: 40,  h: 200 },
+  // Right-center passage
+  { x: 2100, y: 340, w: 180, h: 40  },
+  { x: 2240, y: 340, w: 40,  h: 200 },
+  // Lower-left L
+  { x: 1520, y: 540, w: 160, h: 40  },
+  { x: 1520, y: 540, w: 40,  h: 200 },
+  // Lower-center
+  { x: 1780, y: 620, w: 200, h: 40  },
+  { x: 1920, y: 500, w: 40,  h: 180 },
+  // Lower-right block
+  { x: 2200, y: 580, w: 40,  h: 220 },
+  { x: 2200, y: 740, w: 200, h: 40  },
+  { x: 2460, y: 500, w: 40,  h: 200 },
+];
+
+// ── PHASER SCENE ─────────────────────────────────────────────────────────────
+class GameScene extends Phaser.Scene {
+  constructor() { super({ key: 'GameScene' }); }
+
+  preload() {
+    // Draw robot texture programmatically
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    // Player robot: blue
+    g.clear();
+    g.fillStyle(0x2244cc, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0x88aaff, 1);
+    g.fillRect(10, 8, 8, 8);  // left eye
+    g.fillRect(22, 8, 8, 8);  // right eye
+    g.fillStyle(0x4466ee, 1);
+    g.fillRect(8, 20, 24, 6); // chest
+    g.generateTexture('player-robot', 36, 36);
+
+    g.clear();
+    g.fillStyle(0xcc2222, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xff8888, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xee4444, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('enemy-robot', 36, 36);
+
+    // Shotgun bot: purple
+    g.clear();
+    g.fillStyle(0x882299, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xee88ff, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xaa44cc, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('shotgun-robot', 36, 36);
+
+    // Tank: olive top-down view with barrel pointing right
+    g.clear();
+    g.fillStyle(0x223311, 1);
+    g.fillRect(2, 2,  36, 8);   // left track
+    g.fillRect(2, 26, 36, 8);   // right track
+    g.fillStyle(0x556633, 1);
+    g.fillRect(6, 10, 28, 16);  // body
+    g.fillStyle(0x667744, 1);
+    g.fillCircle(20, 18, 9);    // turret
+    g.fillStyle(0x334422, 1);
+    g.fillRect(20, 15, 18, 6);  // barrel →
+    g.generateTexture('tank', 40, 36);
+
+    // Combat vehicle: low wide hull, two side-by-side barrels pointing right
+    g.clear();
+    g.fillStyle(0x1a2e0a, 1);
+    g.fillRect(0,  28, 44, 7);   // bottom track
+    g.fillRect(0,   9, 44, 7);   // top track
+    g.fillStyle(0x2d4a18, 1);
+    g.fillRect(4,  14, 36, 16);  // main hull
+    g.fillStyle(0x3d6020, 1);
+    g.fillRect(10, 11, 24, 22);  // raised centre block
+    g.fillStyle(0x4a7828, 1);
+    g.fillRect(14, 13, 16, 18);  // turret base
+    g.fillStyle(0x223310, 1);
+    g.fillRect(22, 11,  22, 5);  // barrel 1 (upper) →
+    g.fillRect(22, 18,  22, 5);  // barrel 2 (lower) →
+    g.fillStyle(0x5a9030, 1);
+    g.fillCircle(22, 22, 5);     // turret dome
+    g.generateTexture('combat-vehicle', 44, 44);
+
+    // Plane: top-down, pointing right (east)
+    g.clear();
+    g.fillStyle(0xddeeff, 1);
+    g.fillRect(2,  15, 36, 6);   // fuselage
+    g.fillRect(14,  3, 5, 30);   // main wings
+    g.fillRect(2,  15, 10, 6);   // rear body
+    g.fillRect(3,  14,  5, 8);   // tail fin
+    g.fillStyle(0x88aacc, 1);
+    g.fillRect(34, 16, 4, 4);    // nose
+    g.generateTexture('plane', 40, 36);
+
+    // Helicopter: top-down, cockpit pointing right
+    g.clear();
+    g.fillStyle(0x999999, 0.6);
+    g.fillRect(2, 17, 36, 6);    // main rotor blade (horizontal)
+    g.fillRect(17, 2, 6, 36);    // main rotor blade (vertical)
+    g.fillStyle(0x445566, 1);
+    g.fillEllipse(20, 20, 22, 18); // body
+    g.fillStyle(0x334455, 1);
+    g.fillRect(3, 18, 10, 4);    // tail boom ←
+    g.fillRect(3, 14, 4, 12);    // tail rotor
+    g.fillStyle(0x77aacc, 1);
+    g.fillEllipse(26, 20, 12, 10); // cockpit canopy
+    g.generateTexture('helicopter', 40, 40);
+
+    // Orange robot
+    g.clear();
+    g.fillStyle(0xcc4400, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xff9944, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xff6600, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('orange-robot', 36, 36);
+
+    // Yellow robot
+    g.clear();
+    g.fillStyle(0x998800, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0xffee44, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0xccaa00, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('yellow-robot', 36, 36);
+
+    // Green robot
+    g.clear();
+    g.fillStyle(0x116622, 1);
+    g.fillRect(4, 4, 28, 28);
+    g.fillStyle(0x88ff88, 1);
+    g.fillRect(10, 8, 8, 8);
+    g.fillRect(22, 8, 8, 8);
+    g.fillStyle(0x33cc55, 1);
+    g.fillRect(8, 20, 24, 6);
+    g.generateTexture('green-robot', 36, 36);
+
+    // Deploy-drone sprite: cyan quadcopter
+    g.clear();
+    g.fillStyle(0x112233, 1);
+    g.fillRect(2, 14, 12, 4);
+    g.fillRect(22, 14, 12, 4);
+    g.fillRect(14, 2, 4, 12);
+    g.fillRect(14, 22, 4, 12);
+    g.fillStyle(0x00ccff, 0.9);
+    g.fillCircle(6,  16, 5);
+    g.fillCircle(30, 16, 5);
+    g.fillCircle(16, 6,  5);
+    g.fillCircle(16, 30, 5);
+    g.fillStyle(0x0066aa, 1);
+    g.fillCircle(16, 16, 7);
+    g.fillStyle(0x44ffff, 1);
+    g.fillRect(19, 14, 7, 4);
+    g.generateTexture('deploy-drone', 36, 36);
+
+    g.destroy();
+  }
+
+  create() {
+    // Background grid
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0d0d1a, 1);
+    bg.fillRect(0, -MAP3_H, WORLD_W, WORLD_H + MAP3_H);
+    bg.lineStyle(1, 0x1a1a3a, 0.6);
+    for (let x = 0; x <= WORLD_W; x += TILE) bg.lineBetween(x, -MAP3_H, x, WORLD_H);
+    for (let y = -MAP3_H; y <= WORLD_H; y += TILE) bg.lineBetween(0, y, WORLD_W, y);
+    // Visual dividers
+    bg.lineStyle(2, 0x334455, 0.4);
+    bg.lineBetween(1440, -MAP3_H, 1440, WORLD_H);  // map 1 / map 2 border
+
+    // Walls
+    this.wallGraphics = this.add.graphics();
+    this.wallRects = WALLS.map(w => new Phaser.Geom.Rectangle(w.x, w.y, w.w, w.h));
+    this.drawWalls();
+
+    // Robots
+    const makeRobot = (x, y, isPlayer, id, isTank = false) => ({
+      id, isPlayer, isTank, x, y, spawnX: x, spawnY: y,
+      hp: isTank ? 38 : 100, maxHp: isTank ? 38 : 100, respawning: false,
+      cooldowns: [0, 0, 0, 0, 0, 0],
+      sprite: this.add.image(x, y,
+        isTank ? 'tank' : (isPlayer ? 'player-robot' : 'enemy-robot')
+      ).setOrigin(0.5),
+      selectionRing: this.add.graphics(),
+      hpBar: this.add.graphics(),
+      cdBar: this.add.graphics(),
+      label: this.add.text(x, y + 28,
+        isTank ? `T${id+1}` : (isPlayer ? `P${id+1}` : `E${id+1}`),
+        { fontSize: '10px',
+          color: isTank ? '#88ff44' : (isPlayer ? '#88aaff' : '#ff8888'),
+          fontFamily: 'monospace' }
+      ).setOrigin(0.5),
+    });
+
+    robots = [
+      makeRobot(100, 300, true,  0),
+      makeRobot(80,  750, true,  1),
+      makeRobot(170, 750, true,  2),
+      makeRobot(1060, 180, false, 0),
+      makeRobot(1060, 700, false, 1),
+      makeRobot(1060, 440, false, 2),
+      makeRobot(580,  220, false, 0, true),  // Tank 1
+      makeRobot(540,  620, false, 1, true),  // Tank 2
+      makeRobot(780,  420, false, 2, true),  // Tank 3
+      makeRobot(900,  280, false, 3),        // Extra red 1
+      makeRobot(720,  660, false, 4),        // Extra red 2
+      makeRobot(340,  450, false, 5),        // Extra red 3
+      makeRobot(650,  110, false, 6),        // Extra red 4
+    ];
+
+    // ── Yellow team: ground soldiers (laser + grenade) + drones (minigun) ──
+    [[650, 620, 'Y1'], [100, 670, 'Y2'], [1060, 490, 'Y3']].forEach(([x, y, lbl], i) => {
+      const yr = makeRobot(x, y, false, 30 + i);
+      yr.isYellow = true;
+      yr.sprite.setTexture('yellow-robot');
+      yr.label.setText(lbl);
+      yr.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(yr);
+    });
+    // Yellow drones — fly freely, minigun
+    [[310, 490, 'YD1'], [870, 145, 'YD2']].forEach(([x, y, lbl], i) => {
+      const yd = makeRobot(x, y, false, 33 + i);
+      yd.isYellowDrone = true;
+      yd.speed = 120;
+      yd.sprite.setTexture('deploy-drone').setTint(0xffee00);
+      yd.label.setText(lbl);
+      yd.label.setStyle({ color: '#ffee44', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(yd);
+    });
+
+    // ── Map 3 enemies (above map 1, negative y) ───────────────────────────
+    robots.push(makeRobot(200,  -700, false, 21));
+    robots.push(makeRobot(700,  -600, false, 22));
+    robots.push(makeRobot(1050, -650, false, 23));
+    robots.push(makeRobot(350,  -380, false, 24));
+    robots.push(makeRobot(850,  -380, false, 25));
+    // Map 3 tank
+    robots.push(makeRobot(580,  -820, false, 4, true));
+
+    // ── Map 4 enemies (above map 2, x:1440-2600, negative y) ──────────────
+    robots.push(makeRobot(1600, -700, false, 36));
+    robots.push(makeRobot(2000, -800, false, 37));
+    robots.push(makeRobot(2150, -650, false, 38));
+    robots.push(makeRobot(2420, -700, false, 39));
+    robots.push(makeRobot(2550, -300, false, 40));
+    // Map 4 tank
+    robots.push(makeRobot(1850, -420, false, 5, true));
+    // Map 4 green robots
+    [[1700, -350, 'G5'], [2300, -400, 'G6']].forEach(([x, y, lbl], i) => {
+      const gr = makeRobot(x, y, false, 11 + i);
+      gr.isGreen = true;
+      gr.sprite.setTexture('green-robot');
+      gr.label.setText(lbl);
+      gr.label.setStyle({ color: '#88ff88', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(gr);
+    });
+    // Map 4 shotgun bot
+    const s2 = makeRobot(2100, -750, false, 6);
+    s2.isShotgunBot = true;
+    s2.shotgunOnly = true;
+    s2.sprite.setTexture('shotgun-robot');
+    s2.label.setText('S2');
+    s2.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(s2);
+
+    // ── Combat vehicles: dual laser ───────────────────────────────────────
+    // Enemy vehicles (V1-V10): attack everyone except fellow enemy vehicles
+    [
+      { x: 140,  y: 270  },   // map 1
+      { x: 870,  y: 600  },   // map 1
+      { x: 400,  y: -680 },   // map 3
+      { x: 700,  y: -380 },   // map 3
+      { x: 1700, y: 300  },   // map 2
+      { x: 600,  y: 760  },   // map 1
+      { x: 2000, y: 350  },   // map 2
+      { x: 2400, y: 640  },   // map 2
+      { x: 300,  y: -730 },   // map 3
+      { x: 1000, y: -500 },   // map 3
+      { x: 350,  y: 200  },   // map 1 (V11)
+      { x: 2200, y: 450  },   // map 2 (V12)
+      { x: 1700, y: -700 },   // map 4 (V13)
+      { x: 2050, y: -500 },   // map 4 (V14)
+      { x: 2400, y: -300 },   // map 4 (V15)
+    ].forEach(({ x, y }, i) => {
+      const cv = {
+        id: 40 + i, isPlayer: false, isTank: false, isCombatVehicle: true,
+        x, y, spawnX: x, spawnY: y,
+        hp: 70, maxHp: 70, respawning: false,
+        cooldowns: [0, 0, 0, 0, 0, 0, 0],
+        sprite: this.add.image(x, y, 'combat-vehicle').setOrigin(0.5),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(x, y + 30, `V${i + 1}`,
+          { fontSize: '10px', color: '#aaffaa', fontFamily: 'monospace' }).setOrigin(0.5),
+      };
+      robots.push(cv);
+      this.drawHpBar(cv);
+    });
+
+    // Ally vehicles (AV1-AV5): blue-allied, attack everyone except players + allies
+    [
+      { x: 200,  y: 580  },   // map 1
+      { x: 700,  y: 760  },   // map 1
+      { x: 1600, y: 640  },   // map 2
+      { x: 250,  y: -300 },   // map 3
+      { x: 850,  y: -760 },   // map 3
+      { x: 1500, y: -500 },   // map 4 (AV6)
+      { x: 2100, y: -350 },   // map 4 (AV7)
+      { x: 650,  y: -600 },   // map 3 (AV8)
+      { x: 1000, y: -300 },   // map 3 (AV9)
+      { x: 2500, y: 420  },   // map 2 (AV10)
+    ].forEach(({ x, y }, i) => {
+      const av = {
+        id: 50 + i, isPlayer: false, isTank: false, isCombatVehicle: true, isAllyVehicle: true,
+        x, y, spawnX: x, spawnY: y,
+        hp: 70, maxHp: 70, respawning: false,
+        cooldowns: [0, 0, 0, 0, 0, 0, 0],
+        sprite: this.add.image(x, y, 'combat-vehicle').setOrigin(0.5).setTint(0x3366dd),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(x, y + 30, `AV${i + 1}`,
+          { fontSize: '10px', color: '#4499ff', fontFamily: 'monospace' }).setOrigin(0.5),
+      };
+      robots.push(av);
+      this.drawHpBar(av);
+    });
+
+    // ── Map 2 enemies ─────────────────────────────────────────────────────
+    robots.push(makeRobot(1600, 200, false, 15));
+    robots.push(makeRobot(2000, 180, false, 16));
+    robots.push(makeRobot(1700, 700, false, 17));
+    robots.push(makeRobot(2350, 420, false, 18));
+    robots.push(makeRobot(2500, 720, false, 19));
+    // Map 2 tank
+    robots.push(makeRobot(2150, 450, false, 3, true));
+
+    // Orange robots — honey grenade (dual rocket), attacks everyone non-orange
+    const or1 = makeRobot(400, 720, false, 14);
+    or1.isOrange = true;
+    or1.sprite.setTexture('orange-robot');
+    or1.label.setText('O1');
+    or1.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(or1);
+
+    // Second orange robot — map 2
+    const or2 = makeRobot(1900, 680, false, 20);
+    or2.isOrange = true;
+    or2.sprite.setTexture('orange-robot');
+    or2.label.setText('O2');
+    or2.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(or2);
+
+    // Extra orange robots (O3–O6)
+    [
+      { x: 720,  y: 200,  id: 26 },   // map 1 — right top
+      { x: 550,  y: -500, id: 27 },   // map 3 — mid
+      { x: 2300, y: 200,  id: 28 },   // map 2 — top
+      { x: 200,  y: -750, id: 29 },   // map 3 — far left
+    ].forEach(({ x, y, id }, i) => {
+      const or = makeRobot(x, y, false, id);
+      or.isOrange = true;
+      or.sprite.setTexture('orange-robot');
+      or.label.setText(`O${i + 3}`);
+      or.label.setStyle({ color: '#ff8844', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(or);
+    });
+
+
+    // Green team — laser only, fight red enemies
+    [[430, 80], [750, 310], [320, 330], [860, 460]].forEach(([x, y], i) => {
+      const gr = makeRobot(x, y, false, 7 + i);
+      gr.isGreen = true;
+      gr.sprite.setTexture('green-robot');
+      gr.label.setText(`G${i + 1}`);
+      gr.label.setStyle({ color: '#88ff88', fontFamily: 'monospace', fontSize: '10px' });
+      robots.push(gr);
+    });
+
+    // Shotgun bot (single) — purple faction, attacks everyone
+    const s1 = makeRobot(820, 100, false, 3);
+    s1.isShotgunBot = true;
+    s1.shotgunOnly = true;
+    s1.sprite.setTexture('shotgun-robot');
+    s1.label.setText('S1');
+    s1.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(s1);
+
+    // Dual-shotgun bot 1 — purple faction, attacks everyone
+    const ds1 = makeRobot(280, 680, false, 4);
+    ds1.isShotgunBot = true;
+    ds1.shotgunOnly = true;
+    ds1.dualShotgun = true;
+    ds1.sprite.setTexture('shotgun-robot');
+    ds1.label.setText('DS1');
+    ds1.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(ds1);
+
+    // Dual-shotgun bot 2 — purple faction, attacks everyone
+    const ds2 = makeRobot(490, 80, false, 5);
+    ds2.isShotgunBot = true;
+    ds2.shotgunOnly = true;
+    ds2.dualShotgun = true;
+    ds2.sprite.setTexture('shotgun-robot');
+    ds2.label.setText('DS2');
+    ds2.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
+    robots.push(ds2);
+
+    this.robots = robots;
+    this.updateAllHpBars();
+
+    // Auto-select the single player robot — no explicit selection needed
+    selectedRobot = robots.find(r => r.isPlayer);
+    this.drawSelectionRing(selectedRobot);
+
+    // ── INPUT: hold = weapon menu, tap = move/attack ───────────────────────
+    this.holdTimer = null;
+    this.didHold = false;
+
+    this.input.on('pointerdown', (ptr) => {
+      if (gameOver) return;
+      this.didHold = false;
+      this.holdTimer = this.time.delayedCall(450, () => {
+        this.didHold = true;
+        this.showWeaponMenu(ptr.x, ptr.y, selectedRobot);
+      });
+    });
+
+    this.input.on('pointerup', (ptr) => {
+      if (gameOver) return;
+      if (this.holdTimer) { this.holdTimer.remove(); this.holdTimer = null; }
+      if (this.didHold) return;
+
+      const tapped = this.robotAt(ptr.worldX, ptr.worldY);
+      if (tapped && !tapped.isPlayer && !tapped.isAllyVehicle) {
+        this.doAttack(selectedRobot, tapped);
+      } else if (!tapped || tapped.isPlayer) {
+        this.moveRobot(selectedRobot, ptr.worldX, ptr.worldY);
+      }
+    });
+
+    // Enemy AI timer
+    this.time.addEvent({ delay: 2200, callback: this.enemyTurn,     callbackScope: this, loop: true });
+    // Companion AI timer (P2)
+    this.time.addEvent({ delay: 1600, callback: this.companionTurn, callbackScope: this, loop: true });
+    // P3 AI timer
+    this.time.addEvent({ delay: 1400, callback: this.p3Turn, callbackScope: this, loop: true });
+    // Tank AI timer
+    this.time.addEvent({ delay: 1900, callback: this.tankTurn,      callbackScope: this, loop: true });
+    // Helicopter AI timer
+    this.time.addEvent({ delay: 1300, callback: this.heliTurn,      callbackScope: this, loop: true });
+    // Shotgun bot AI timer (neutral faction — attacks everyone)
+    this.time.addEvent({ delay: 1800, callback: this.shotgunBotTurn, callbackScope: this, loop: true });
+    // Green team AI timer (laser only — attacks red enemies)
+    this.time.addEvent({ delay: 1500, callback: this.greenTurn, callbackScope: this, loop: true });
+    // Orange robot AI timer (honey grenade — attacks everyone)
+    this.time.addEvent({ delay: 2200, callback: this.orangeTurn, callbackScope: this, loop: true });
+    // Yellow team AI timer (laser + grenade — attacks everyone non-yellow)
+    this.time.addEvent({ delay: 1800, callback: this.yellowTurn, callbackScope: this, loop: true });
+    // Combat vehicle AI timer (dual laser — attacks everyone)
+    this.time.addEvent({ delay: 1500, callback: this.vehicleTurn, callbackScope: this, loop: true });
+
+
+    // Setup weapon menu buttons — display order: Миниган, Мёд, Граната, Дрон, Лазер, Ракета, Дробовик
+    const WEAPON_DISPLAY_ORDER = [4, 6, 3, 5, 0, 1, 2];
+    document.getElementById('w7').onclick = () => this.hideWeaponMenu();
+    WEAPON_DISPLAY_ORDER.forEach((weaponIdx, slotIdx) => {
+      const btn = document.getElementById('w' + slotIdx);
+      btn.ontouchstart = btn.onclick = (e) => {
+        e.stopPropagation();
+        if (btn.disabled) return;
+        if (WEAPONS[weaponIdx].vehicleWeapon) {
+          // Deploy vehicle immediately, keep menu open for more taps
+          this.deployVehicle();
+        } else {
+          this.selectWeapon(weaponIdx);
+        }
+      };
+    });
+
+    // Move indicator, shot line, range circle
+    this.moveIndicator = this.add.graphics();
+    this.shotLine     = this.add.graphics();
+    this.rangeCircle  = this.add.graphics();
+
+    // ── Helicopters (orbit patrol, shoot laser at everyone) ───────────────
+    [
+      { cx: 360, cy: 310, r: 140, a: 0,               speed: 0.9  },
+      { cx: 820, cy: 530, r: 130, a: Math.PI,         speed: 1.1  },
+      { cx: 160, cy: 550, r:  90, a: Math.PI / 2,     speed: 1.3  },
+      { cx: 700, cy: 180, r: 100, a: Math.PI * 1.5,   speed: 1.0  },
+      { cx: 480, cy: 420, r:  80, a: Math.PI * 0.75,  speed: 1.4  },
+    ].forEach((hd, i) => {
+      const hx = hd.cx + Math.cos(hd.a) * hd.r;
+      const hy = hd.cy + Math.sin(hd.a) * hd.r;
+      const heli = {
+        id: i, isPlayer: false, isTank: false, isPlane: false, isHelicopter: true,
+        x: hx, y: hy, spawnX: hx, spawnY: hy,
+        hp: 38, maxHp: 38, respawning: false,
+        cooldowns: [0, 0, 0],
+        orbitCX: hd.cx, orbitCY: hd.cy, orbitR: hd.r,
+        orbitAngle: hd.a, orbitSpeed: hd.speed,
+        sprite: this.add.image(hx, hy, 'helicopter').setOrigin(0.5),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(hx, hy, '', {fontSize:'1px'}).setOrigin(0.5),
+      };
+      robots.push(heli);
+    });
+
+
+    // ── Planes (added to robots array so they can be shot) ────────────────
+    [
+      { x: -30,  y: 220, angle: 0.12,             speed: 130, dropIn: 2.5 },
+      { x: W+30, y: 620, angle: Math.PI - 0.15,   speed: 115, dropIn: 1.2 },
+      { x: 560,  y: -30, angle: Math.PI/2 + 0.1,  speed: 120, dropIn: 3.8 },
+    ].forEach((pd, i) => {
+      const plane = {
+        id: i, isPlayer: false, isTank: false, isPlane: true,
+        x: pd.x, y: pd.y, spawnX: pd.x, spawnY: pd.y,
+        hp: 38, maxHp: 38, respawning: false,
+        cooldowns: [0, 0, 0],
+        angle: pd.angle, speed: pd.speed, dropIn: pd.dropIn,
+        sprite: this.add.image(pd.x, pd.y, 'plane').setOrigin(0.5).setScale(1.1),
+        selectionRing: this.add.graphics(),
+        hpBar: this.add.graphics(),
+        cdBar: this.add.graphics(),
+        label: this.add.text(pd.x, pd.y, '', {fontSize:'1px'}).setOrigin(0.5),
+      };
+      plane.sprite.setRotation(pd.angle);
+      robots.push(plane);
+    });
+
+    // ── Camera: follows selected robot, bounded to world ──────────────────
+    this.cameras.main.setBounds(0, -MAP3_H, WORLD_W, WORLD_H + MAP3_H);
+    this.cameras.main.startFollow(selectedRobot.sprite, true, 0.1, 0.1);
+  }
+
+  update(time, delta) {
+    const now = Date.now();
+    const dt = delta / 1000; // seconds
+
+
+    // ── Deployed drone: move toward enemy + minigun auto-fire ─────────────
+    if (!gameOver && deployedDrone && deployedDrone.hp > 0 && !deployedDrone.respawning) {
+      const mg = WEAPONS[4];
+      const droneEnemies = this.robots.filter(r =>
+        !r.isPlayer && !r.isDeployDrone && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+      );
+      if (droneEnemies.length) {
+        const nearest = droneEnemies.reduce((best, r) => {
+          const d = Phaser.Math.Distance.Between(deployedDrone.x, deployedDrone.y, r.x, r.y);
+          return (!best || d < best.d) ? { r, d } : best;
+        }, null);
+        // Fly toward target (drone ignores walls)
+        const angle = Math.atan2(nearest.r.y - deployedDrone.y, nearest.r.x - deployedDrone.x);
+        const step = deployedDrone.speed * dt;
+        deployedDrone.x += Math.cos(angle) * step;
+        deployedDrone.y += Math.sin(angle) * step;
+        deployedDrone.sprite.setPosition(deployedDrone.x, deployedDrone.y);
+        deployedDrone.sprite.setRotation(angle + Math.PI / 2);
+        deployedDrone.label.setPosition(deployedDrone.x, deployedDrone.y + 24);
+        this.drawHpBar(deployedDrone);
+        // Minigun fire
+        if (nearest.d <= mg.range && deployedDrone.cooldowns[4] <= now) {
+          this.attackRobot(deployedDrone, nearest.r, 4);
+        }
+      }
+    }
+
+    // ── Minigun auto-fire ──────────────────────────────────────────────────
+    if (!gameOver && armedWeapon === 4 && selectedRobot && selectedRobot.hp > 0) {
+      const mg = WEAPONS[4];
+      const enemies = this.robots.filter(r =>
+        !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+      );
+      const nearest = enemies.reduce((best, r) => {
+        const d = Phaser.Math.Distance.Between(selectedRobot.x, selectedRobot.y, r.x, r.y);
+        return (!best || d < best.d) ? { r, d } : best;
+      }, null);
+      if (nearest && nearest.d <= mg.range && selectedRobot.cooldowns[4] <= now) {
+        this.attackRobot(selectedRobot, nearest.r, 4);
+      }
+    }
+
+    // ── Yellow drones: fly freely, minigun ────────────────────────────────
+    if (!gameOver) {
+      const mg = WEAPONS[4];
+      this.robots.filter(r => r.isYellowDrone && r.hp > 0 && !r.respawning).forEach(drone => {
+        const targets = this.robots.filter(r =>
+          !r.isYellow && !r.isYellowDrone && !r.isDeployDrone && r.hp > 0 && !r.respawning
+        );
+        if (!targets.length) return;
+        const nearest = targets.reduce((best, r) => {
+          const d = Phaser.Math.Distance.Between(drone.x, drone.y, r.x, r.y);
+          return (!best || d < best.d) ? { r, d } : best;
+        }, null);
+        const angle = Math.atan2(nearest.r.y - drone.y, nearest.r.x - drone.x);
+        drone.x += Math.cos(angle) * drone.speed * dt;
+        drone.y += Math.sin(angle) * drone.speed * dt;
+        drone.sprite.setPosition(drone.x, drone.y).setRotation(angle + Math.PI / 2);
+        drone.label.setPosition(drone.x, drone.y + 24);
+        this.drawHpBar(drone);
+        if (nearest.d <= mg.range && (drone.cooldowns[4] || 0) <= now) {
+          this.attackRobot(drone, nearest.r, 4);
+        }
+      });
+    }
+
+    // ── Helicopters orbit movement ─────────────────────────────────────────
+    if (!gameOver) {
+      this.robots.filter(r => r.isHelicopter && r.hp > 0).forEach(h => {
+        h.orbitAngle += h.orbitSpeed * dt;
+        h.x = h.orbitCX + Math.cos(h.orbitAngle) * h.orbitR;
+        h.y = h.orbitCY + Math.sin(h.orbitAngle) * h.orbitR;
+        h.sprite.setPosition(h.x, h.y);
+        // Face direction of travel (tangent)
+        h.sprite.setRotation(h.orbitAngle + Math.PI / 2);
+        this.drawHpBar(h);
+      });
+    }
+
+    // ── Planes ────────────────────────────────────────────────────────────
+    if (!gameOver) {
+      this.robots.filter(r => r.isPlane && r.hp > 0).forEach(p => {
+        p.x += Math.cos(p.angle) * p.speed * dt;
+        p.y += Math.sin(p.angle) * p.speed * dt;
+        // Wrap around edges
+        if (p.x < -60) p.x = WORLD_W + 60;
+        else if (p.x > WORLD_W + 60) p.x = -60;
+        if (p.y < -60) p.y = H + 60;
+        else if (p.y > H + 60) p.y = -60;
+        p.sprite.setPosition(p.x, p.y);
+
+        // Drop bomb countdown
+        p.dropIn -= dt;
+        if (p.dropIn <= 0) {
+          p.dropIn = 3.5 + Math.random() * 2;
+          if (p.x > 0 && p.x < W && p.y > 0 && p.y < H) {
+            this.dropBomb(p.x, p.y);
+          }
+        }
+      });
+    }
+
+    // ── Cooldown bars ─────────────────────────────────────────────────────
+    this.robots.forEach(r => {
+      r.cdBar.clear();
+      if (r.hp <= 0 || r.isPlane || r.isHelicopter) return;
+
+      if (r.isPlayer) {
+        // Player: show armed weapon cooldown
+        if (armedWeapon === null || r !== selectedRobot) return;
+        const cdLeft = Math.max(0, r.cooldowns[armedWeapon] - now);
+        if (cdLeft <= 0) return;
+        const pct = cdLeft / WEAPONS[armedWeapon].cd;
+        const bw = 36, bh = 4, bx = r.x - 18, by = r.y + 30;
+        r.cdBar.fillStyle(0x222233, 1); r.cdBar.fillRect(bx, by, bw, bh);
+        r.cdBar.fillStyle(WEAPONS[armedWeapon].color, 1); r.cdBar.fillRect(bx, by, bw * pct, bh);
+        r.cdBar.lineStyle(1, 0x555566, 1); r.cdBar.strokeRect(bx, by, bw, bh);
+      } else {
+        // Enemy: show soonest active cooldown (skip weapons already ready)
+        let minCd = 0, minTotal = 1;
+        WEAPONS.forEach((w, i) => {
+          const cd = Math.max(0, r.cooldowns[i] - now);
+          if (cd > 0 && (minCd === 0 || cd < minCd)) { minCd = cd; minTotal = w.cd; }
+        });
+        if (minCd <= 0) return;
+        const pct = minCd / minTotal;
+        const bw = 36, bh = 4, bx = r.x - 18, by = r.y + 30;
+        r.cdBar.fillStyle(0x330000, 1); r.cdBar.fillRect(bx, by, bw, bh);
+        r.cdBar.fillStyle(0xff3300, 1); r.cdBar.fillRect(bx, by, bw * pct, bh);
+        r.cdBar.lineStyle(1, 0x664444, 1); r.cdBar.strokeRect(bx, by, bw, bh);
+      }
+    });
+
+    // ── Range circle always follows selected robot ────────────────────────
+    this.rangeCircle.clear();
+    if (selectedRobot && selectedRobot.hp > 0 && armedWeapon !== null) {
+      const w = WEAPONS[armedWeapon];
+      this.rangeCircle.lineStyle(1.5, w.color, 0.35);
+      this.rangeCircle.strokeCircle(selectedRobot.x, selectedRobot.y, w.range);
+    }
+  }
+
+  robotAt(x, y) {
+    return this.robots.find(r => r.hp > 0 && !r.respawning && Phaser.Math.Distance.Between(x, y, r.x, r.y) < 28);
+  }
+
+  // Attack with chosen weapon (armedWeapon) or best available
+  doAttack(attacker, target) {
+    const now = Date.now();
+    const dist = Phaser.Math.Distance.Between(attacker.x, attacker.y, target.x, target.y);
+
+    let wIdx = armedWeapon;
+    if (wIdx !== null) {
+      // Specific weapon chosen
+      if (attacker.cooldowns[wIdx] > now) {
+        const cd = ((attacker.cooldowns[wIdx] - now) / 1000).toFixed(1);
+        this.updateStatus(`${WEAPONS[wIdx].name} ещё заряжается: ${cd}s`);
+        return;
+      }
+    } else {
+      // Auto: pick best available in range (skip playerOnly — must be selected manually)
+      wIdx = -1;
+      WEAPONS.forEach((w, i) => {
+        if (w.playerOnly) return;
+        if (attacker.cooldowns[i] <= now && dist <= w.range)
+          if (wIdx < 0 || w.dmg > WEAPONS[wIdx].dmg) wIdx = i;
+      });
+      if (wIdx < 0) {
+        // Any available weapon regardless of range?
+        const anyReady = WEAPONS.findIndex((w, i) => attacker.cooldowns[i] <= now);
+        if (anyReady < 0) { this.updateStatus('Все оружия на перезарядке!'); return; }
+        this.updateStatus('Враг слишком далеко! Подойди ближе.');
+        return;
+      }
+    }
+    this.attackRobot(attacker, target, wIdx);
+  }
+
+  drawWalls() {
+    const g = this.wallGraphics;
+    g.clear();
+    WALLS.forEach(w => {
+      g.fillStyle(0x334455, 1);
+      g.fillRect(w.x, w.y, w.w, w.h);
+      g.lineStyle(2, 0x5577aa, 1);
+      g.strokeRect(w.x, w.y, w.w, w.h);
+      // rivets
+      g.fillStyle(0x667788, 1);
+      g.fillRect(w.x + 4, w.y + 4, 5, 5);
+      g.fillRect(w.x + w.w - 9, w.y + 4, 5, 5);
+      g.fillRect(w.x + 4, w.y + w.h - 9, 5, 5);
+      g.fillRect(w.x + w.w - 9, w.y + w.h - 9, 5, 5);
+    });
+  }
+
+  isWall(x, y) {
+    const PAD = 18;
+    return this.wallRects.some(r =>
+      x > r.x - PAD && x < r.x + r.width + PAD &&
+      y > r.y - PAD && y < r.y + r.height + PAD
+    );
+  }
+
+  lineBlockedByWall(x1, y1, x2, y2) {
+    const line = new Phaser.Geom.Line(x1, y1, x2, y2);
+    return this.wallRects.some(r => Phaser.Geom.Intersects.LineToRectangle(line, r));
+  }
+
+  clampToMap(x, y) {
+    return { x: Phaser.Math.Clamp(x, 25, WORLD_W - 25), y: Phaser.Math.Clamp(y, -MAP3_H + 25, WORLD_H - 25) };
+  }
+
+  updateAllHpBars() {
+    this.robots.forEach(r => this.drawHpBar(r));
+  }
+
+  drawHpBar(robot) {
+    const g = robot.hpBar;
+    g.clear();
+    const bw = 36, bh = 5;
+    const bx = robot.x - bw / 2, by = robot.y - 28;
+    g.fillStyle(robot.isAllyVehicle ? 0x001133 : 0x330000, 1); g.fillRect(bx, by, bw, bh);
+    const pct = Math.max(0, robot.hp / robot.maxHp);
+    const col = pct > 0.5 ? 0x00dd44 : pct > 0.25 ? 0xffaa00 : 0xff2200;
+    g.fillStyle(col, 1); g.fillRect(bx, by, bw * pct, bh);
+    g.lineStyle(1, 0x888888, 1); g.strokeRect(bx, by, bw, bh);
+  }
+
+  drawSelectionRing(robot) {
+    this.robots.forEach(r => r.selectionRing.clear());
+    if (!robot) return;
+    const g = robot.selectionRing;
+    g.lineStyle(2, 0x00ff88, 1);
+    g.strokeCircle(robot.x, robot.y, 22);
+    // corner markers
+    g.lineStyle(2, 0x00ff88, 1);
+    [-1, 1].forEach(sx => [-1, 1].forEach(sy => {
+      g.lineBetween(robot.x + sx * 22, robot.y + sy * 16, robot.x + sx * 22, robot.y + sy * 22);
+      g.lineBetween(robot.x + sx * 16, robot.y + sy * 22, robot.x + sx * 22, robot.y + sy * 22);
+    }));
+  }
+
+  showWeaponMenu(px, py, robot) {
+    const menu = document.getElementById('weapon-menu');
+    const now = Date.now();
+    [4, 6, 3, 5, 0, 1, 2].forEach((i, slotIdx) => {
+      const w = WEAPONS[i];
+      const btn = document.getElementById('w' + slotIdx);
+      const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
+      if (w.vehicleWeapon) {
+        btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc}` +
+          (deployedVehicleCount > 0 ? ` · развёрнуто: ${deployedVehicleCount}` : '') + `</small>`;
+        btn.disabled = false;
+        return;
+      }
+      const cdLeft = Math.max(0, (robot.cooldowns[i] || 0) - now);
+      btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc} · радиус ${w.range}</small>` +
+        (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
+      btn.disabled = cdLeft > 0;
+    });
+    // Position near robot (screen coords), keep inside canvas
+    const sx = robot.x - this.cameras.main.scrollX;
+    const sy = robot.y - this.cameras.main.scrollY;
+    let mx = sx + 14, my = sy - 100;
+    if (mx + 250 > W) mx = sx - 254;
+    if (my < 0) my = 8;
+    if (my + 360 > H) my = H - 365;
+    menu.style.left = mx + 'px';
+    menu.style.top  = my + 'px';
+    menu.style.display = 'block';
+    this.updateStatus('Удержи — выбери оружие, тапни врага — атаковать');
+  }
+
+  hideWeaponMenu() {
+    document.getElementById('weapon-menu').style.display = 'none';
+  }
+
+  selectWeapon(idx) {
+    this.hideWeaponMenu();
+    armedWeapon = idx;
+    this.updateStatus(`${WEAPONS[idx].name} готово — тапни на врага для атаки`);
+  }
+
+  deployVehicle() {
+    if (!selectedRobot || selectedRobot.hp <= 0) return;
+    // Try spawning at a non-wall position near the selected robot
+    let vx, vy;
+    const offsets = [[50, 0], [-50, 0], [0, 50], [0, -50], [50, 50], [-50, -50], [60, -60], [-60, 60]];
+    for (const [dx, dy] of offsets) {
+      const cx = selectedRobot.x + dx, cy = selectedRobot.y + dy;
+      if (!this.isWall(cx, cy)) { vx = cx; vy = cy; break; }
+    }
+    if (vx === undefined) { this.updateStatus('Нет места для машины рядом!'); return; }
+    deployedVehicleCount++;
+    const av = {
+      id: 60 + deployedVehicleCount, isPlayer: false, isTank: false,
+      isCombatVehicle: true, isAllyVehicle: true,
+      x: vx, y: vy, spawnX: vx, spawnY: vy,
+      hp: 70, maxHp: 70, respawning: false,
+      cooldowns: [0, 0, 0, 0, 0, 0, 0],
+      sprite: this.add.image(vx, vy, 'combat-vehicle').setOrigin(0.5).setTint(0x3366dd),
+      selectionRing: this.add.graphics(),
+      hpBar: this.add.graphics(),
+      cdBar: this.add.graphics(),
+      label: this.add.text(vx, vy + 30, `DV${deployedVehicleCount}`,
+        { fontSize: '10px', color: '#4499ff', fontFamily: 'monospace' }).setOrigin(0.5),
+    };
+    robots.push(av);
+    this.drawHpBar(av);
+    this.updateStatus(`🚗 Машина DV${deployedVehicleCount} развёрнута!`);
+  }
+
+  deployDrone() {
+    if (!selectedRobot || selectedRobot.hp <= 0) return;
+    const dx = selectedRobot.x + 35, dy = selectedRobot.y - 35;
+    const drone = {
+      id: 99, isPlayer: false, isDeployDrone: true,
+      isTank: false, isPlane: false, isHelicopter: false, isShotgunBot: false,
+      x: dx, y: dy, spawnX: dx, spawnY: dy,
+      hp: 50, maxHp: 50, respawning: false,
+      cooldowns: [0, 0, 0, 0, 0, 0],
+      speed: 140,
+      sprite: this.add.image(dx, dy, 'deploy-drone').setOrigin(0.5).setScale(0.85),
+      selectionRing: this.add.graphics(),
+      hpBar: this.add.graphics(),
+      cdBar: this.add.graphics(),
+      label: this.add.text(dx, dy + 24, 'D', { fontSize: '10px', color: '#44ddff', fontFamily: 'monospace' }).setOrigin(0.5),
+    };
+    deployedDrone = drone;
+    this.robots.push(drone);
+    this.drawHpBar(drone);
+    this.updateStatus('Дрон запущен — атакует ближайшего врага!');
+  }
+
+  moveRobot(robot, tx, ty) {
+    const clamped = this.clampToMap(tx, ty);
+    if (this.isWall(clamped.x, clamped.y)) {
+      this.updateStatus('Там стена! Выбери другое место.');
+      return;
+    }
+    if (this.lineBlockedByWall(robot.x, robot.y, clamped.x, clamped.y)) {
+      this.updateStatus('Путь заблокирован стеной! Обойди её.');
+      return;
+    }
+    const dist = Phaser.Math.Distance.Between(robot.x, robot.y, clamped.x, clamped.y);
+    const MAX_MOVE = 200;
+    if (dist > MAX_MOVE) {
+      clamped.x = robot.x + (clamped.x - robot.x) * MAX_MOVE / dist;
+      clamped.y = robot.y + (clamped.y - robot.y) * MAX_MOVE / dist;
+    }
+    // Move animation — only tween sprite and label, redraw graphics in onUpdate
+    this.tweens.add({
+      targets: robot.sprite,
+      x: clamped.x, y: clamped.y,
+      duration: 300, ease: 'Power2',
+      onUpdate: () => {
+        robot.x = robot.sprite.x;
+        robot.y = robot.sprite.y;
+        robot.label.setPosition(robot.x, robot.y + 24);
+        this.drawHpBar(robot);
+        if (robot === selectedRobot) this.drawSelectionRing(robot);
+        robot.cdBar.clear(); // redrawn by update() next frame
+      },
+      onComplete: () => {
+        robot.x = clamped.x;
+        robot.y = clamped.y;
+        robot.label.setPosition(robot.x, robot.y + 24);
+        this.drawHpBar(robot);
+        this.updateStatus('Тапни на врага или удержи для выбора оружия');
+      }
+    });
+    // Move indicator
+    this.moveIndicator.clear();
+    this.moveIndicator.lineStyle(1, 0x00ff88, 0.5);
+    this.moveIndicator.lineBetween(robot.x, robot.y, clamped.x, clamped.y);
+    this.time.delayedCall(400, () => this.moveIndicator.clear());
+  }
+
+  attackRobot(attacker, target, wIdx) {
+    const w = WEAPONS[wIdx];
+    const dist = Phaser.Math.Distance.Between(attacker.x, attacker.y, target.x, target.y);
+    if (dist > w.range) {
+      this.updateStatus(`Слишком далеко! Максимальный радиус ${w.name}: ${w.range}`);
+      return;
+    }
+    if (!w.noLOS && this.lineBlockedByWall(attacker.x, attacker.y, target.x, target.y)) {
+      this.updateStatus('Стена блокирует выстрел! Найди позицию с прямой видимостью.');
+      return;
+    }
+    // Set cooldown
+    attacker.cooldowns[wIdx] = Date.now() + w.cd;
+    // Apply damage (grenade = instant kill, others = random variance)
+    const dmg = w.noLOS ? w.dmg : Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+    target.hp = Math.max(0, target.hp - dmg);
+    this.drawHpBar(target);
+
+    // Shot color: player=weapon color, drone=cyan, tank=lime, shotgun bot=purple, enemy=enemy color
+    const shotColor = attacker.isPlayer ? w.color : (attacker.isTank ? 0x88ff44 : (attacker.isShotgunBot ? 0xcc44ff : (attacker.isOrange ? 0xff8800 : (attacker.isYellow || attacker.isYellowDrone ? 0xffee44 : (attacker.isCombatVehicle ? (attacker.isAllyVehicle ? 0x4488ff : 0xaaff44) : w.enemyColor)))));
+    if (wIdx === 3) {
+      this.showGrenadeEffect(attacker, target);
+    } else {
+      this.showShotEffect(attacker, target, shotColor);
+    }
+    this.showDmgNumber(target.x, target.y, dmg, shotColor);
+    this.updateStatus(`${attacker.label.text} стреляет ${w.name} → ${target.label.text}: -${dmg} HP`);
+
+    if (target.hp <= 0) {
+      this.killRobot(target);
+      return;
+    }
+
+    // Dual rocket: fire a second shot after 220ms
+    if (w.dualRocket) {
+      this.time.delayedCall(220, () => {
+        if (target.hp <= 0 || gameOver) return;
+        const dmg2 = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+        target.hp = Math.max(0, target.hp - dmg2);
+        this.drawHpBar(target);
+        this.showShotEffect(attacker, target, shotColor);
+        this.showDmgNumber(target.x, target.y, dmg2, shotColor);
+        this.updateStatus(`${attacker.label.text} — вторая ракета → ${target.label.text}: -${dmg2} HP`);
+        if (target.hp <= 0) this.killRobot(target);
+      });
+    }
+  }
+
+  showShotEffect(from, to, color) {
+    const g = this.shotLine;
+    g.clear();
+    g.lineStyle(3, color, 1);
+    g.lineBetween(from.x, from.y, to.x, to.y);
+    const flash = this.add.graphics();
+    flash.fillStyle(color, 1);
+    flash.fillCircle(from.x, from.y, 8);
+    const impact = this.add.graphics();
+    impact.fillStyle(color, 0.8);
+    impact.fillCircle(to.x, to.y, 12);
+    this.time.delayedCall(120, () => { g.clear(); flash.destroy(); impact.destroy(); });
+  }
+
+  showGrenadeEffect(from, to) {
+    // Dashed arc trajectory (goes over walls)
+    const g = this.add.graphics();
+    g.lineStyle(2, 0x44ff44, 0.9);
+    const steps = 16;
+    const peakX = (from.x + to.x) / 2;
+    const peakY = Math.min(from.y, to.y) - 70;
+    // Draw dotted Bezier arc
+    for (let t = 0; t < 1; t += 1 / steps) {
+      if (Math.floor(t * steps) % 2 === 0) {
+        const t1 = t, t2 = t + 1 / steps;
+        const x1 = (1-t1)*(1-t1)*from.x + 2*(1-t1)*t1*peakX + t1*t1*to.x;
+        const y1 = (1-t1)*(1-t1)*from.y + 2*(1-t1)*t1*peakY + t1*t1*to.y;
+        const x2 = (1-t2)*(1-t2)*from.x + 2*(1-t2)*t2*peakX + t2*t2*to.x;
+        const y2 = (1-t2)*(1-t2)*from.y + 2*(1-t2)*t2*peakY + t2*t2*to.y;
+        g.lineBetween(x1, y1, x2, y2);
+      }
+    }
+    // Grenade icon moving along arc
+    const icon = this.add.text(from.x, from.y, '💣', { fontSize: '16px' }).setOrigin(0.5);
+    this.tweens.add({
+      targets: { t: 0 }, t: 1, duration: 400,
+      onUpdate: (_, obj) => {
+        const t = obj.t;
+        icon.x = (1-t)*(1-t)*from.x + 2*(1-t)*t*peakX + t*t*to.x;
+        icon.y = (1-t)*(1-t)*from.y + 2*(1-t)*t*peakY + t*t*to.y;
+      },
+      onComplete: () => {
+        icon.destroy(); g.destroy();
+        // Big green explosion
+        const ex = this.add.graphics();
+        [0x44ff44, 0xaaff44, 0xffffff, 0xffff00].forEach((c, i) => {
+          this.time.delayedCall(i * 70, () => {
+            ex.clear();
+            ex.fillStyle(c, 1);
+            ex.fillCircle(to.x, to.y, 28 + i * 10);
+          });
+        });
+        this.time.delayedCall(400, () => ex.destroy());
+      }
+    });
+  }
+
+  showDmgNumber(x, y, dmg, color) {
+    const label = dmg >= 999 ? '💀 УБИТ' : `-${dmg}`;
+    const txt = this.add.text(x, y - 20, label, {
+      fontSize: dmg >= 999 ? '22px' : '18px', color: '#' + color.toString(16).padStart(6, '0'),
+      fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+    this.tweens.add({
+      targets: txt, y: y - 60, alpha: 0, duration: 900,
+      onComplete: () => txt.destroy()
+    });
+  }
+
+  killRobot(robot) {
+    // Explosion effect
+    const ex = this.add.graphics();
+    [0xff4400, 0xffaa00, 0xffff00].forEach((c, i) => {
+      this.time.delayedCall(i * 80, () => {
+        ex.clear(); ex.fillStyle(c, 1);
+        ex.fillCircle(robot.x, robot.y, 24 + i * 6);
+      });
+    });
+    this.time.delayedCall(300, () => {
+      ex.destroy();
+      robot.sprite.setAlpha(0.2).setTint(0x444444);
+      robot.hpBar.clear();
+      robot.cdBar.clear();
+    });
+
+    if (robot.isDeployDrone) {
+      deployedDrone = null;
+      this.robots = this.robots.filter(r => r !== robot);
+      this.tweens.add({
+        targets: robot.sprite, angle: 360, alpha: 0,
+        duration: 500, ease: 'Power2',
+        onComplete: () => { robot.sprite.setVisible(false); robot.hpBar.clear(); robot.label.setVisible(false); }
+      });
+      this.updateStatus('Дрон уничтожен! Зайди в арсенал → выпусти нового.');
+      return;
+    }
+
+    if (robot.isPlayer) {
+      lives--;
+      this.updateLivesBar();
+      if (robot === selectedRobot) { selectedRobot = null; this.drawSelectionRing(null); }
+      if (lives <= 0) {
+        this.time.delayedCall(500, () => { gameOver = true; this.showEndScreen('☠ ПОРАЖЕНИЕ', '#ff2200'); });
+      } else {
+        robot.respawning = true;
+        this.time.delayedCall(1800, () => this.respawnRobot(robot));
+      }
+    } else if (robot.isPlane || robot.isHelicopter) {
+      // Crash: spin and fade
+      this.tweens.add({
+        targets: robot.sprite, angle: 720, alpha: 0,
+        duration: 800, ease: 'Power2',
+        onComplete: () => robot.sprite.setVisible(false)
+      });
+    } else {
+      this.time.delayedCall(500, () => {
+        // Victory when all enemy robots defeated (tanks, helis, planes, drones don't count)
+        const enemiesAlive = this.robots.filter(r =>
+          r.hp > 0 && !r.isPlayer && !r.isDeployDrone && !r.isAllyVehicle &&
+          !r.isTank && !r.isHelicopter && !r.isPlane && !r.isYellowDrone
+        ).length;
+        if (enemiesAlive === 0) { gameOver = true; this.showEndScreen('🏆 ПОБЕДА!', '#00ff88'); }
+      });
+    }
+  }
+
+  respawnRobot(robot) {
+    robot.hp = robot.maxHp;
+    robot.respawning = false;
+    robot.cooldowns = [0, 0, 0, 0, 0, 0];
+    robot.x = robot.spawnX;
+    robot.y = robot.spawnY;
+    robot.sprite.setPosition(robot.spawnX, robot.spawnY);
+    robot.label.setPosition(robot.spawnX, robot.spawnY + 24);
+    robot.sprite.clearTint().setAlpha(1);
+    if (robot.id === 0) {
+      selectedRobot = robot;
+      this.drawSelectionRing(robot);
+      this.cameras.main.startFollow(robot.sprite, true, 0.1, 0.1);
+    }
+    this.drawHpBar(robot);
+    // Flash white to signal respawn
+    this.tweens.add({
+      targets: robot.sprite, alpha: 0.2,
+      duration: 150, yoyo: true, repeat: 4,
+      onComplete: () => robot.sprite.setAlpha(1)
+    });
+    const pName = `P${robot.id + 1}`;
+    this.updateStatus(robot.id === 0 ? `${pName} возродился! Жизней осталось: ${lives}` : `${pName} вернулся в бой!`);
+  }
+
+  updateLivesBar() {
+    document.getElementById('lives-bar').textContent =
+      '❤️ '.repeat(lives) + '🖤 '.repeat(5 - lives);
+  }
+
+  showEndScreen(msg, color) {
+    this.add.rectangle(W / 2, H / 2, 320, 100, 0x000000, 0.85).setScrollFactor(0);
+    this.add.text(W / 2, H / 2, msg, {
+      fontSize: '42px', color, fontFamily: 'monospace', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(0);
+    this.add.text(W / 2, H / 2 + 36, 'Обнови страницу для новой игры', {
+      fontSize: '14px', color: '#aaaaaa', fontFamily: 'monospace',
+    }).setOrigin(0.5).setScrollFactor(0);
+  }
+
+  // Simple enemy AI
+  enemyTurn() {
+    if (gameOver) return;
+    // Exclude shotgun bots and deploy drone — they have separate AI
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isDeployDrone && !r.isTank && !r.isPlane && !r.isHelicopter && !r.isShotgunBot && r.hp > 0);
+    // Red robots fight blue players, green team, deploy drone, AND shotgun bots
+    const players = this.robots.filter(r => (r.isPlayer || r.isShotgunBot || r.isDeployDrone || r.isGreen) && r.hp > 0 && !r.respawning);
+    if (!enemies.length || !players.length) return;
+
+    enemies.forEach(enemy => {
+      // Find closest target (player or shotgun bot)
+      const target = players.reduce((closest, p) =>
+        Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y) <
+        Phaser.Math.Distance.Between(enemy.x, enemy.y, closest.x, closest.y) ? p : closest
+      );
+      const dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
+
+      const now = Date.now();
+      const hasLOS = !this.lineBlockedByWall(enemy.x, enemy.y, target.x, target.y);
+
+      // Normal robots: pick best available weapon in range (skip player-only)
+      let bestW = -1;
+      WEAPONS.forEach((w, i) => {
+        if (w.playerOnly) return;
+        if ((enemy.cooldowns[i] || 0) <= now && dist <= w.range && hasLOS)
+          if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+      });
+
+      if (bestW >= 0) {
+        this.attackRobot(enemy, target, bestW);
+        return;
+      }
+
+      // Move toward player
+      this.moveToward(enemy, target.x, target.y, 80);
+    });
+  }
+
+
+  // Orange robot AI — honey grenade (dual rocket), attacks everyone non-orange
+  orangeTurn() {
+    if (gameOver) return;
+    const oranges = this.robots.filter(r => r.isOrange && r.hp > 0 && !r.respawning);
+    if (!oranges.length) return;
+    const now = Date.now();
+    const honey = WEAPONS[6];
+    oranges.forEach(orange => {
+      const targets = this.robots.filter(r =>
+        !r.isOrange && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+      );
+      if (!targets.length) return;
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(orange.x, orange.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(orange.x, orange.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(orange.x, orange.y, target.x, target.y);
+      if ((orange.cooldowns[6] || 0) <= now && dist <= honey.range &&
+          !this.lineBlockedByWall(orange.x, orange.y, target.x, target.y)) {
+        this.attackRobot(orange, target, 6);
+        return;
+      }
+      this.moveToward(orange, target.x, target.y, 85);
+    });
+  }
+
+  // Combat vehicle AI — dual laser
+  // Enemy vehicles attack everyone except fellow enemy vehicles
+  // Ally vehicles attack everyone except players and fellow ally vehicles
+  vehicleTurn() {
+    if (gameOver) return;
+    const vehicles = this.robots.filter(r => r.isCombatVehicle && r.hp > 0 && !r.respawning);
+    if (!vehicles.length) return;
+    const now = Date.now();
+    vehicles.forEach(vehicle => {
+      const targets = vehicle.isAllyVehicle
+        ? this.robots.filter(r =>
+            !r.isPlayer && !r.isAllyVehicle &&
+            !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+          )
+        : this.robots.filter(r =>
+            !r.isPlayer && !r.isAllyVehicle &&
+            !(r.isCombatVehicle && !r.isAllyVehicle) &&
+            !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+          );
+      if (!targets.length) return;
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(vehicle.x, vehicle.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(vehicle.x, vehicle.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(vehicle.x, vehicle.y, target.x, target.y);
+      vehicle.sprite.setRotation(Math.atan2(target.y - vehicle.y, target.x - vehicle.x));
+      // Ally vehicles use minigun (wIdx=4), enemy vehicles use laser (wIdx=0)
+      const wIdx = vehicle.isAllyVehicle ? 4 : 0;
+      const w = WEAPONS[wIdx];
+      // Hard safety: ally vehicles never shoot blue team
+      if (vehicle.isAllyVehicle && (target.isPlayer || target.isAllyVehicle)) return;
+      if ((vehicle.cooldowns[wIdx] || 0) <= now && dist <= w.range &&
+          !this.lineBlockedByWall(vehicle.x, vehicle.y, target.x, target.y)) {
+        this.attackRobot(vehicle, target, wIdx);
+        return;
+      }
+      this.moveToward(vehicle, target.x, target.y, 40);
+    });
+  }
+
+  // Yellow team AI — laser + grenade, attacks everyone non-yellow
+  yellowTurn() {
+    if (gameOver) return;
+    const yellows = this.robots.filter(r => r.isYellow && r.hp > 0 && !r.respawning);
+    if (!yellows.length) return;
+    const now = Date.now();
+    yellows.forEach(yellow => {
+      const targets = this.robots.filter(r =>
+        !r.isYellow && !r.isYellowDrone && !r.isPlane && !r.isHelicopter &&
+        !r.isDeployDrone && r.hp > 0 && !r.respawning
+      );
+      if (!targets.length) return;
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(yellow.x, yellow.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(yellow.x, yellow.y, b.x, b.y) ? a : b
+      );
+      const dist  = Phaser.Math.Distance.Between(yellow.x, yellow.y, target.x, target.y);
+      const hasLOS = !this.lineBlockedByWall(yellow.x, yellow.y, target.x, target.y);
+      // Grenade through walls if ready
+      if ((yellow.cooldowns[3] || 0) <= now && dist <= WEAPONS[3].range) {
+        this.attackRobot(yellow, target, 3);
+        return;
+      }
+      // Laser with line of sight
+      if ((yellow.cooldowns[0] || 0) <= now && dist <= WEAPONS[0].range && hasLOS) {
+        this.attackRobot(yellow, target, 0);
+        return;
+      }
+      this.moveToward(yellow, target.x, target.y, 90);
+    });
+  }
+
+  // Green team AI — laser only, attack red enemies
+  greenTurn() {
+    if (gameOver) return;
+    const greens = this.robots.filter(r => r.isGreen && r.hp > 0 && !r.respawning);
+    const targets = this.robots.filter(r =>
+      !r.isPlayer && !r.isGreen && !r.isDeployDrone &&
+      !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
+    );
+    if (!greens.length || !targets.length) return;
+    const now = Date.now();
+    greens.forEach(green => {
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(green.x, green.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(green.x, green.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(green.x, green.y, target.x, target.y);
+      const laser = WEAPONS[0];
+      if ((green.cooldowns[0] || 0) <= now && dist <= laser.range &&
+          !this.lineBlockedByWall(green.x, green.y, target.x, target.y)) {
+        this.attackRobot(green, target, 0);
+        return;
+      }
+      this.moveToward(green, target.x, target.y, 85);
+    });
+  }
+
+  // Companion AI — P2 acts on its own
+  companionTurn() {
+    if (gameOver) return;
+    const companion = this.robots.find(r => r.isPlayer && r.id === 1 && r.hp > 0 && !r.respawning);
+    if (!companion) return;
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0);
+    if (!enemies.length) return;
+
+    const now = Date.now();
+    // Find closest enemy
+    const target = enemies.reduce((a, b) =>
+      Phaser.Math.Distance.Between(companion.x, companion.y, a.x, a.y) <
+      Phaser.Math.Distance.Between(companion.x, companion.y, b.x, b.y) ? a : b
+    );
+    const dist = Phaser.Math.Distance.Between(companion.x, companion.y, target.x, target.y);
+
+    const hasLOS = !this.lineBlockedByWall(companion.x, companion.y, target.x, target.y);
+    // Full arsenal — skip vehicle deploy only; minigun used as fallback
+    let bestW = -1;
+    WEAPONS.forEach((w, i) => {
+      if (w.vehicleWeapon) return;
+      if (w.noLOS && (companion.cooldowns[i] || 0) <= now && dist <= w.range) {
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return;
+      }
+      if ((companion.cooldowns[i] || 0) <= now && dist <= w.range && hasLOS)
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+    });
+
+    if (bestW >= 0) {
+      this.attackRobot(companion, target, bestW);
+      return;
+    }
+
+    this.moveToward(companion, target.x, target.y, 115);
+  }
+
+  // P3 AI — full arsenal including playerOnly weapons
+  p3Turn() {
+    if (gameOver) return;
+    const p3 = this.robots.find(r => r.isPlayer && r.id === 2 && r.hp > 0 && !r.respawning);
+    if (!p3) return;
+    const enemies = this.robots.filter(r => !r.isPlayer && !r.isAllyVehicle && !r.isPlane && !r.isHelicopter && r.hp > 0);
+    if (!enemies.length) return;
+
+    const now = Date.now();
+    const target = enemies.reduce((a, b) =>
+      Phaser.Math.Distance.Between(p3.x, p3.y, a.x, a.y) <
+      Phaser.Math.Distance.Between(p3.x, p3.y, b.x, b.y) ? a : b
+    );
+    const dist = Phaser.Math.Distance.Between(p3.x, p3.y, target.x, target.y);
+    const hasLOS = !this.lineBlockedByWall(p3.x, p3.y, target.x, target.y);
+
+    // Use all weapons including minigun — skip vehicle deploy only
+    let bestW = -1;
+    WEAPONS.forEach((w, i) => {
+      if (w.vehicleWeapon) return;
+      if (w.noLOS && (p3.cooldowns[i] || 0) <= now && dist <= w.range) {
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i; return;
+      }
+      if ((p3.cooldowns[i] || 0) <= now && dist <= w.range && hasLOS)
+        if (bestW < 0 || w.dmg > WEAPONS[bestW].dmg) bestW = i;
+    });
+
+    if (bestW >= 0) {
+      this.attackRobot(p3, target, bestW);
+      return;
+    }
+
+    this.moveToward(p3, target.x, target.y, 115);
+  }
+
+  // Move robot toward (tx,ty), trying alternative angles if direct path is walled
+  moveToward(robot, tx, ty, moveD) {
+    // Skip if sprite is already mid-tween to avoid tween pile-up (prevents freeze)
+    if (this.tweens.isTweening(robot.sprite)) return;
+    const base = Math.atan2(ty - robot.y, tx - robot.x);
+    for (const da of [0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35]) {
+      const a = base + da;
+      const c = this.clampToMap(
+        robot.x + Math.cos(a) * moveD,
+        robot.y + Math.sin(a) * moveD
+      );
+      if (!this.isWall(c.x, c.y)) {
+        this.tweens.add({
+          targets: robot.sprite, x: c.x, y: c.y,
+          duration: 400, ease: 'Power1',
+          onUpdate: () => {
+            robot.x = robot.sprite.x; robot.y = robot.sprite.y;
+            robot.label.setPosition(robot.x, robot.y + 24);
+            this.drawHpBar(robot);
+          },
+          onComplete: () => {
+            robot.x = c.x; robot.y = c.y;
+            robot.label.setPosition(robot.x, robot.y + 24);
+            this.drawHpBar(robot);
+          }
+        });
+        return;
+      }
+    }
+  }
+
+
+  // Helicopter AI — orbits and shoots laser at all robots
+  heliTurn() {
+    if (gameOver) return;
+    const helis = this.robots.filter(r => r.isHelicopter && r.hp > 0);
+    const targets = this.robots.filter(r => !r.isHelicopter && !r.isPlane && r.hp > 0 && !r.respawning);
+    if (!helis.length || !targets.length) return;
+
+    const now = Date.now();
+    helis.forEach(heli => {
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(heli.x, heli.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(heli.x, heli.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(heli.x, heli.y, target.x, target.y);
+      const laser = WEAPONS[0]; // laser only
+      if (heli.cooldowns[0] <= now && dist <= laser.range &&
+          !this.lineBlockedByWall(heli.x, heli.y, target.x, target.y)) {
+        this.attackRobot(heli, target, 0);
+      }
+    });
+  }
+
+  // Shotgun Bot AI — purple faction, attacks EVERYONE (players, red, tanks, helis)
+  shotgunBotTurn() {
+    if (gameOver) return;
+    const bots = this.robots.filter(r => r.isShotgunBot && r.hp > 0);
+    // Target: any robot that is NOT a shotgun bot and NOT a plane
+    const targets = this.robots.filter(r => !r.isShotgunBot && !r.isPlane && r.hp > 0 && !r.respawning);
+    if (!bots.length || !targets.length) return;
+
+    const now = Date.now();
+    bots.forEach(bot => {
+      const target = targets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(bot.x, bot.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(bot.x, bot.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(bot.x, bot.y, target.x, target.y);
+      const hasLOS = !this.lineBlockedByWall(bot.x, bot.y, target.x, target.y);
+      const w = WEAPONS[2]; // shotgun only
+
+      if (bot.cooldowns[2] <= now && dist <= w.range && hasLOS) {
+        this.attackRobot(bot, target, 2);
+        if (bot.dualShotgun) {
+          this.time.delayedCall(120, () => {
+            if (target.hp > 0 && !gameOver) {
+              const dmg = Math.round(w.dmg * (0.85 + Math.random() * 0.3));
+              target.hp = Math.max(0, target.hp - dmg);
+              this.drawHpBar(target);
+              this.showShotEffect(bot, target, 0xcc44ff);
+              this.showDmgNumber(target.x, target.y, dmg, 0xcc44ff);
+              if (target.hp <= 0) this.killRobot(target);
+            }
+          });
+        }
+        return;
+      }
+      this.moveToward(bot, target.x, target.y, 80);
+    });
+  }
+
+  // Tank AI — attacks everyone (players and enemies alike)
+  tankTurn() {
+    if (gameOver) return;
+    const tanks = this.robots.filter(r => r.isTank && r.hp > 0);
+    const allTargets = this.robots.filter(r => !r.isTank && !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning);
+    if (!tanks.length || !allTargets.length) return;
+
+    const now = Date.now();
+    tanks.forEach(tank => {
+      const target = allTargets.reduce((a, b) =>
+        Phaser.Math.Distance.Between(tank.x, tank.y, a.x, a.y) <
+        Phaser.Math.Distance.Between(tank.x, tank.y, b.x, b.y) ? a : b
+      );
+      const dist = Phaser.Math.Distance.Between(tank.x, tank.y, target.x, target.y);
+
+      // Rotate sprite to face target
+      tank.sprite.setRotation(Math.atan2(target.y - tank.y, target.x - tank.x));
+
+      // Tanks only fire rockets (weapon index 1)
+      const rocketIdx = 1;
+      const rocket = WEAPONS[rocketIdx];
+      if (tank.cooldowns[rocketIdx] <= now && dist <= rocket.range &&
+          !this.lineBlockedByWall(tank.x, tank.y, target.x, target.y)) {
+        this.attackRobot(tank, target, rocketIdx);
+        return;
+      }
+
+      // Move toward target
+      this.moveToward(tank, target.x, target.y, 70);
+    });
+  }
+
+  dropBomb(x, y) {
+    // Warning shadow that pulses
+    const shadow = this.add.graphics();
+    const drawShadow = (alpha) => {
+      shadow.clear();
+      shadow.fillStyle(0xff6600, alpha);
+      shadow.fillCircle(x, y, 65);
+      shadow.lineStyle(2, 0xffaa00, alpha + 0.2);
+      shadow.strokeCircle(x, y, 65);
+    };
+    drawShadow(0.25);
+    this.tweens.add({
+      targets: { v: 0.25 }, v: 0.5,
+      duration: 300, yoyo: true, repeat: 3,
+      onUpdate: (_, obj) => drawShadow(obj.v)
+    });
+    this.time.delayedCall(1500, () => {
+      shadow.destroy();
+      this.explodeBomb(x, y);
+    });
+  }
+
+  explodeBomb(x, y) {
+    const RADIUS = 65, DMG = 40;
+    // Explosion visuals
+    const ex = this.add.graphics();
+    [0xff2200, 0xff7700, 0xffdd00, 0xffffff].forEach((c, i) => {
+      this.time.delayedCall(i * 60, () => {
+        ex.clear();
+        ex.fillStyle(c, 1);
+        ex.fillCircle(x, y, RADIUS * (0.4 + i * 0.2));
+      });
+    });
+    this.time.delayedCall(350, () => ex.destroy());
+
+    // Damage only red enemies (not blue players, not ally drones)
+    this.robots.forEach(r => {
+      if (r.isPlayer) return;
+      if (r.hp <= 0 || r.respawning) return;
+      if (Phaser.Math.Distance.Between(x, y, r.x, r.y) < RADIUS) {
+        r.hp = Math.max(0, r.hp - DMG);
+        this.drawHpBar(r);
+        this.showDmgNumber(r.x, r.y, DMG, 0xff7700);
+        if (r.hp <= 0) this.killRobot(r);
+      }
+    });
+  }
+
+  updateStatus(msg) {
+    document.getElementById('status-bar').textContent = msg;
+  }
+}
+
+// ── BOOT ────────────────────────────────────────────────────────────────────
+const game = new Phaser.Game({
+  type: Phaser.AUTO,
+  width: W, height: H,
+  parent: 'game-container',
+  backgroundColor: '#0d0d1a',
+  scene: GameScene,
+});
+</script>
+</body>
+</html>
