@@ -458,8 +458,8 @@ class GameScene extends Phaser.Scene {
     s2.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(s2);
 
-    // ── Combat vehicles: dual laser ───────────────────────────────────────
-    // Enemy vehicles (V1-V10): attack everyone except fellow enemy vehicles
+    // ── Combat vehicles: laser ────────────────────────────────────────────
+    // Enemy vehicles (V1-V15): attack everyone except fellow enemy vehicles
     [
       { x: 140,  y: 270  },   // map 1
       { x: 870,  y: 600  },   // map 1
@@ -491,35 +491,6 @@ class GameScene extends Phaser.Scene {
       };
       robots.push(cv);
       this.drawHpBar(cv);
-    });
-
-    // Ally vehicles (AV1-AV5): blue-allied, attack everyone except players + allies
-    [
-      { x: 200,  y: 580  },   // map 1
-      { x: 700,  y: 760  },   // map 1
-      { x: 1600, y: 640  },   // map 2
-      { x: 250,  y: -300 },   // map 3
-      { x: 850,  y: -760 },   // map 3
-      { x: 1500, y: -500 },   // map 4 (AV6)
-      { x: 2100, y: -350 },   // map 4 (AV7)
-      { x: 650,  y: -600 },   // map 3 (AV8)
-      { x: 1000, y: -300 },   // map 3 (AV9)
-      { x: 2500, y: 420  },   // map 2 (AV10)
-    ].forEach(({ x, y }, i) => {
-      const av = {
-        id: 50 + i, isPlayer: false, isTank: false, isCombatVehicle: true, isAllyVehicle: true,
-        x, y, spawnX: x, spawnY: y,
-        hp: 70, maxHp: 70, respawning: false,
-        cooldowns: [0, 0, 0, 0, 0, 0, 0],
-        sprite: this.add.image(x, y, 'combat-vehicle').setOrigin(0.5).setTint(0x3366dd),
-        selectionRing: this.add.graphics(),
-        hpBar: this.add.graphics(),
-        cdBar: this.add.graphics(),
-        label: this.add.text(x, y + 30, `AV${i + 1}`,
-          { fontSize: '10px', color: '#4499ff', fontFamily: 'monospace' }).setOrigin(0.5),
-      };
-      robots.push(av);
-      this.drawHpBar(av);
     });
 
     // ── Map 2 enemies ─────────────────────────────────────────────────────
