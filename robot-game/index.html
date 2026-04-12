@@ -43,8 +43,7 @@
     <button class="weapon-btn" id="w4"></button>
     <button class="weapon-btn" id="w5"></button>
     <button class="weapon-btn" id="w6"></button>
-    <button class="weapon-btn" id="w7"></button>
-    <button class="weapon-btn" id="w8" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
+    <button class="weapon-btn" id="w7" style="margin-top:8px; border-color:#ff6644; color:#ff6644; background:rgba(255,100,68,0.1)">✖ Отмена</button>
   </div>
 </div>
 
@@ -77,7 +76,6 @@ let robots = [];
 let gameOver = false;
 let lives = 5;
 let deployedDrone = null;
-let deployedVehicleCount = 0;
 let playerHasAK47 = false;
 let floor2Boxes = [];
 
@@ -471,40 +469,6 @@ class GameScene extends Phaser.Scene {
     s2.label.setStyle({ color: '#cc44ff', fontFamily: 'monospace', fontSize: '10px' });
     robots.push(s2);
 
-    // ── Combat vehicles: laser ────────────────────────────────────────────
-    // Enemy vehicles (V1-V15): attack everyone except fellow enemy vehicles
-    [
-      { x: 140,  y: 270  },   // map 1
-      { x: 870,  y: 600  },   // map 1
-      { x: 400,  y: -680 },   // map 3
-      { x: 700,  y: -380 },   // map 3
-      { x: 1700, y: 300  },   // map 2
-      { x: 600,  y: 760  },   // map 1
-      { x: 2000, y: 350  },   // map 2
-      { x: 2400, y: 640  },   // map 2
-      { x: 300,  y: -730 },   // map 3
-      { x: 1000, y: -500 },   // map 3
-      { x: 350,  y: 200  },   // map 1 (V11)
-      { x: 2200, y: 450  },   // map 2 (V12)
-      { x: 1700, y: -700 },   // map 4 (V13)
-      { x: 2050, y: -500 },   // map 4 (V14)
-      { x: 2400, y: -300 },   // map 4 (V15)
-    ].forEach(({ x, y }, i) => {
-      const cv = {
-        id: 40 + i, isPlayer: false, isTank: false, isCombatVehicle: true,
-        x, y, spawnX: x, spawnY: y,
-        hp: 70, maxHp: 70, respawning: false,
-        cooldowns: [0, 0, 0, 0, 0, 0, 0],
-        sprite: this.add.image(x, y, 'combat-vehicle').setOrigin(0.5),
-        selectionRing: this.add.graphics(),
-        hpBar: this.add.graphics(),
-        cdBar: this.add.graphics(),
-        label: this.add.text(x, y + 30, `V${i + 1}`,
-          { fontSize: '10px', color: '#aaffaa', fontFamily: 'monospace' }).setOrigin(0.5),
-      };
-      robots.push(cv);
-      this.drawHpBar(cv);
-    });
 
     // ── Map 2 enemies ─────────────────────────────────────────────────────
     robots.push(makeRobot(1600, 200, false, 15));
@@ -657,24 +621,17 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: 2200, callback: this.orangeTurn, callbackScope: this, loop: true });
     // Yellow team AI timer (laser + grenade — attacks everyone non-yellow)
     this.time.addEvent({ delay: 1800, callback: this.yellowTurn, callbackScope: this, loop: true });
-    // Combat vehicle AI timer (dual laser — attacks everyone)
-    this.time.addEvent({ delay: 1500, callback: this.vehicleTurn, callbackScope: this, loop: true });
 
 
     // Setup weapon menu buttons — display order: Миниган, АК-47, Мёд, Граната, Дрон, Лазер, Ракета, Дробовик
-    const WEAPON_DISPLAY_ORDER = [4, 7, 6, 3, 5, 0, 1, 2];
-    document.getElementById('w8').onclick = () => this.hideWeaponMenu();
+    const WEAPON_DISPLAY_ORDER = [4, 7, 6, 3, 0, 1, 2];
+    document.getElementById('w7').onclick = () => this.hideWeaponMenu();
     WEAPON_DISPLAY_ORDER.forEach((weaponIdx, slotIdx) => {
       const btn = document.getElementById('w' + slotIdx);
       btn.ontouchstart = btn.onclick = (e) => {
         e.stopPropagation();
         if (btn.disabled) return;
-        if (WEAPONS[weaponIdx].vehicleWeapon) {
-          // Deploy vehicle immediately, keep menu open for more taps
-          this.deployVehicle();
-        } else {
-          this.selectWeapon(weaponIdx);
-        }
+        this.selectWeapon(weaponIdx);
       };
     });
 
@@ -1005,7 +962,7 @@ class GameScene extends Phaser.Scene {
   showWeaponMenu(px, py, robot) {
     const menu = document.getElementById('weapon-menu');
     const now = Date.now();
-    [4, 7, 6, 3, 5, 0, 1, 2].forEach((i, slotIdx) => {
+    [4, 7, 6, 3, 0, 1, 2].forEach((i, slotIdx) => {
       const w = WEAPONS[i];
       const btn = document.getElementById('w' + slotIdx);
       // АК-47: заблокирован пока не найден на 2м этаже
@@ -1015,12 +972,6 @@ class GameScene extends Phaser.Scene {
         return;
       }
       const extra = w.playerOnly ? ' <span style="color:#44ff44;font-size:11px">только я</span>' : '';
-      if (w.vehicleWeapon) {
-        btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc}` +
-          (deployedVehicleCount > 0 ? ` · развёрнуто: ${deployedVehicleCount}` : '') + `</small>`;
-        btn.disabled = false;
-        return;
-      }
       const cdLeft = Math.max(0, (robot.cooldowns[i] || 0) - now);
       btn.innerHTML = `${w.name}${extra}<br><small style="color:#aaa;font-size:12px">${w.desc} · радиус ${w.range}</small>` +
         (cdLeft > 0 ? `<span class="cooldown">${(cdLeft / 1000).toFixed(1)}s</span>` : '');
@@ -1047,35 +998,6 @@ class GameScene extends Phaser.Scene {
     this.hideWeaponMenu();
     armedWeapon = idx;
     this.updateStatus(`${WEAPONS[idx].name} готово — тапни на врага для атаки`);
-  }
-
-  deployVehicle() {
-    if (!selectedRobot || selectedRobot.hp <= 0) return;
-    // Try spawning at a non-wall position near the selected robot
-    let vx, vy;
-    const offsets = [[50, 0], [-50, 0], [0, 50], [0, -50], [50, 50], [-50, -50], [60, -60], [-60, 60]];
-    for (const [dx, dy] of offsets) {
-      const cx = selectedRobot.x + dx, cy = selectedRobot.y + dy;
-      if (!this.isWall(cx, cy)) { vx = cx; vy = cy; break; }
-    }
-    if (vx === undefined) { this.updateStatus('Нет места для машины рядом!'); return; }
-    deployedVehicleCount++;
-    const av = {
-      id: 60 + deployedVehicleCount, isPlayer: false, isTank: false,
-      isCombatVehicle: true, isAllyVehicle: true,
-      x: vx, y: vy, spawnX: vx, spawnY: vy,
-      hp: 70, maxHp: 70, respawning: false,
-      cooldowns: [0, 0, 0, 0, 0, 0, 0],
-      sprite: this.add.image(vx, vy, 'combat-vehicle').setOrigin(0.5).setTint(0x3366dd),
-      selectionRing: this.add.graphics(),
-      hpBar: this.add.graphics(),
-      cdBar: this.add.graphics(),
-      label: this.add.text(vx, vy + 30, `DV${deployedVehicleCount}`,
-        { fontSize: '10px', color: '#4499ff', fontFamily: 'monospace' }).setOrigin(0.5),
-    };
-    robots.push(av);
-    this.drawHpBar(av);
-    this.updateStatus(`🚗 Машина DV${deployedVehicleCount} развёрнута!`);
   }
 
   deployDrone() {
@@ -1428,43 +1350,6 @@ class GameScene extends Phaser.Scene {
   // Combat vehicle AI — dual laser
   // Enemy vehicles attack everyone except fellow enemy vehicles
   // Ally vehicles attack everyone except players and fellow ally vehicles
-  vehicleTurn() {
-    if (gameOver) return;
-    const vehicles = this.robots.filter(r => r.isCombatVehicle && r.hp > 0 && !r.respawning);
-    if (!vehicles.length) return;
-    const now = Date.now();
-    vehicles.forEach(vehicle => {
-      const targets = vehicle.isAllyVehicle
-        ? this.robots.filter(r =>
-            !r.isPlayer && !r.isAllyVehicle &&
-            !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
-          )
-        : this.robots.filter(r =>
-            !r.isPlayer && !r.isAllyVehicle &&
-            !(r.isCombatVehicle && !r.isAllyVehicle) &&
-            !r.isPlane && !r.isHelicopter && r.hp > 0 && !r.respawning
-          );
-      if (!targets.length) return;
-      const target = targets.reduce((a, b) =>
-        Phaser.Math.Distance.Between(vehicle.x, vehicle.y, a.x, a.y) <
-        Phaser.Math.Distance.Between(vehicle.x, vehicle.y, b.x, b.y) ? a : b
-      );
-      const dist = Phaser.Math.Distance.Between(vehicle.x, vehicle.y, target.x, target.y);
-      vehicle.sprite.setRotation(Math.atan2(target.y - vehicle.y, target.x - vehicle.x));
-      // Ally vehicles use minigun (wIdx=4), enemy vehicles use laser (wIdx=0)
-      const wIdx = vehicle.isAllyVehicle ? 4 : 0;
-      const w = WEAPONS[wIdx];
-      // Hard safety: ally vehicles never shoot blue team
-      if (vehicle.isAllyVehicle && (target.isPlayer || target.isAllyVehicle)) return;
-      if ((vehicle.cooldowns[wIdx] || 0) <= now && dist <= w.range &&
-          !this.lineBlockedByWall(vehicle.x, vehicle.y, target.x, target.y)) {
-        this.attackRobot(vehicle, target, wIdx);
-        return;
-      }
-      this.moveToward(vehicle, target.x, target.y, 40);
-    });
-  }
-
   // Yellow team AI — laser + grenade, attacks everyone non-yellow
   yellowTurn() {
     if (gameOver) return;
